@@ -1,0 +1,8 @@
+# The Emuru generative model (install on Colab/Kaggle GPU; Colab already has torch)
+torch
+torchvision
+transformers>=4.40,<5
+diffusers>=0.27
+einops
+huggingface_hub
+safetensors

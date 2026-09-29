@@ -1,0 +1,4 @@
+# Optional: watermark + evaluation metrics
+invisible-watermark
+torchmetrics[image]
+torch-fidelity

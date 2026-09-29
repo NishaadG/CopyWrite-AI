@@ -1,0 +1,5 @@
+Unit 2: Deep Generative Models
+
+A Generative Adversarial Network has two networks, a generator and a discriminator, trained against each other. The generator tries to produce realistic samples while the discriminator tries to tell real from fake.
+
+Variational Autoencoders learn a latent distribution and are trained by maximising the evidence lower bound, which balances reconstruction quality against a KL divergence term.
