@@ -14,6 +14,7 @@
 | **Must be on GitHub** | Everything is code + a notebook; personal handwriting photos are git-ignored. |
 | **Graded on methodology, implementation + results, presentation** | Pick a model that maps cleanly onto the syllabus, and build a proper **baseline comparison + metrics**. |
 | **No manual typing of the sample** | Handwriting **OCR (TrOCR)** reads the style photo and flags lines it is unsure of; the user only fixes mistakes. |
+| **Must be easy to demo** | A built-in **library of 36 real handwritings** (IAM database) means the app works with zero setup: pick a style, paste notes, click one button. |
 | **Ethics not required in MVP** | Watermark is an **optional toggle** (off by default). A short ethics reflection is still needed for the *Reflective Journal*, not for the build. |
 
 ## 2. The key decision: which model
@@ -36,6 +37,10 @@ Why it fits:
 3. The T5 decoder is fed the style latents as a prompt and then **continues the sequence**, predicting latent columns for the new text one at a time. Because it is continuing the style image, the new text comes out in the same handwriting.
 4. Generation stops when the model predicts "padding" (blank) latents. The VAE decoder turns the latents back into pixels.
 
+Note: generation is **not deterministic**. The style image is encoded by *sampling* the VAE's latent distribution, so the same (style, text) gives slightly different lines for different seeds. The pipeline fixes the seed for reproducibility.
+
+**What the style image must look like.** From the model card and `modeling_emuru.py`: RGB, **64 px tall** (aspect kept), `to_tensor` then `normalize(0.5, 0.5)` to [-1, 1]. `style_text + " " + gen_text` is fed to T5, and only the new part of the canvas is returned. The official `sample.png` (and the synthetic training data) is **pure black ink on pure white paper** with a small margin. So `preprocess.py` makes every style line match: illumination flattening, ruling removal, **removal of strokes that leak in from the lines above/below** (connected components outside the line's core band), tight crop, 64 px resize, then **contrast normalisation** (paper → 255, ink → ~0). Before this step, real photos gave light-grey paper and grey ink (~50-70), which the model never saw in training.
+
 **Plan B (if Emuru misbehaves):** VATr / VATr++ (same research group, GAN + Transformer, word-level, much lighter, also on Hugging Face). Only the backend class would change.
 
 **Baseline:** a handwriting *font* with random per-letter jitter (`FontGenerator`). This is exactly the "static digital font" the problem statement criticises, so beating it is the result you show.
@@ -53,7 +58,7 @@ Why it fits:
 
 | Mode | Where | Use it for |
 |---|---|---|
-| **Font backend, local** | Laptop | Building/debugging the UI, layout, backgrounds, PDF. Needs no torch. |
+| **Font backend, local** | Laptop | Building/debugging the UI, layout, backgrounds, PDF. Needs no torch. `python app.py` picks it automatically when there is no GPU. |
 | **Emuru on Colab/Kaggle** | Cloud GPU | Real results, demo, evaluation. Open the share link from the laptop or from a phone during the viva. |
 | **Emuru on CPU** | Laptop, if it has ≥ 8 GB free RAM | Possible but slow (minutes per page). Only as a last resort. |
 
@@ -64,10 +69,11 @@ Demo-day tip: start the Colab session ~10 min before, keep a **pre-generated PDF
 ```mermaid
 flowchart LR
     A[Text box / .txt / .docx] --> P
-    S[Photo of 2-5 handwritten lines] --> PRE[Style preprocessing<br/>light flattening · ruling removal ·<br/>line split · crop]
+    S[Photo of 2-5 handwritten lines] --> PRE[Style preprocessing<br/>light flattening · ruling removal ·<br/>line split · neighbour-stroke removal ·<br/>crop · contrast normalisation]
     PRE --> OCR[TrOCR reads each line<br/>+ confidence]
     OCR --> FIX[User checks / corrects text]
     FIX --> REF[Style references<br/>64px image + exact text]
+    L[Sample library<br/>IAM lines + transcriptions] --> REF
     REF --> P[Pipeline]
     B[Background: ruled / plain / grid<br/>or photo of a page] --> BG[Background module<br/>ruled-line detection · margin detection]
     BG --> P
@@ -84,14 +90,15 @@ flowchart LR
 
 | File | Responsibility |
 |---|---|
-| `copywrite/preprocess.py` | Phone photo → clean style lines: illumination flattening, notebook-line removal, projection-profile line split, crop, 64 px resize, safe shortening of long lines |
+| `copywrite/preprocess.py` | Phone photo → clean style lines: illumination flattening, notebook-line removal, projection-profile line split, neighbour-stroke removal, crop, 64 px resize, contrast normalisation, safe shortening of long lines |
+| `copywrite/library.py` | Sample handwritings: downloads one IAM split from Hugging Face (`Teklia/IAM-line`, ~24 MB, once), picks 36 clean lines spread across writers, and caches them as style references |
 | `copywrite/ocr.py` | TrOCR handwriting OCR: reads the style lines with a confidence score (auto-transcription); reused for the legibility metric |
 | `copywrite/backends.py` | `EmuruGenerator` (AI), `FontGenerator` (baseline). Same interface: `generate(text, style) → line image` |
 | `copywrite/background.py` | Page templates; ruled-line and margin detection on photos (morphology + peak finding); line slots |
 | `copywrite/layout.py` | Word wrap, baseline estimation, scaling/overflow handling, jitter, multiply-blend compositing |
 | `copywrite/pipeline.py` | Orchestration: calibrate → wrap → batched generation → pages; returns timing stats |
 | `copywrite/watermark.py` | Optional invisible DWT-DCT watermark (embed + detect) |
-| `copywrite/cli.py`, `app.py` | Command line and Gradio UI |
+| `copywrite/cli.py`, `app.py` | Command line and Gradio UI. The UI has three steps (choose handwriting → text → page) plus one button, with advanced settings folded away; it picks the engine from GPU availability and preloads the model and library in the background. Works on Gradio 5 and 6. |
 | `scripts/evaluate.py` | CER (TrOCR), KID/FID, speed, comparison sheet |
 | `notebooks/run_on_colab.ipynb` | One-click GPU run |
 
@@ -99,7 +106,7 @@ flowchart LR
 
 **Inputs**
 - **Content:** typed text, or a `.txt` / `.md` / `.docx` upload. Each line break starts a new paragraph (indented).
-- **Style:** 1-5 photos of *normal* writing (2-5 lines of 4-8 words is ideal). **OCR reads the lines automatically**; the user only corrects mistakes (lines under 80% confidence are flagged).
+- **Style:** either **one click on a sample handwriting** from the built-in library, or 1-5 photos of the user's *normal* writing (2-5 lines of 4-8 words is ideal). For photos, **OCR reads the lines automatically**; the user only corrects mistakes (lines under 80% confidence are flagged).
 - **Page:** background (ruled / plain / grid / uploaded photo), page size, line spacing, text size, left margin, "messiness", ink colour, seed.
 - **Options:** watermark on/off, backend (emuru / font).
 
@@ -112,7 +119,7 @@ flowchart LR
 | No typing of the sample | TrOCR auto-transcribes; user corrects flagged lines |
 | Few-shot style from 1-5 samples | Emuru's zero-shot conditioning on a style line. Multiple lines are rotated across the output. |
 | Unseen characters | The model infers them from the style; expect lower fidelity for rare characters. Report this honestly as a limitation. |
-| Natural variance | (1) Emuru is deterministic per (style, text), so variety comes from **rotating between the user's style lines**. (2) The **layout adds human noise**: per-line baseline wobble, small rotation, size change, uneven left start. (3) Every word is generated in context, so repeated letters already differ. |
+| Natural variance | (1) Emuru samples its style latents, so each line already varies a little; extra variety comes from **rotating between the user's style lines**. (2) The **layout adds human noise**: per-line baseline wobble, small rotation, size change, uneven left start. (3) Every word is generated in context, so repeated letters already differ. |
 | Consistency (still one writer) | All references come from the same person; the jitter strength is bounded and seed-controlled. |
 | Margins / line spacing / page bounds | Line slots come from page settings, or from **detected ruled lines** in a photo. Overflowing lines are squeezed up to 15%, then shrunk. |
 | Background matches uploaded page | Photo fitted to page size, lines and margin detected, ink **multiply-blended** so paper texture and shading show through the ink. |
@@ -151,7 +158,8 @@ Expected story: Emuru is much closer to the real writer (KID, visual comparison)
 |---|---|
 | Colab disconnects / GPU quota | Kaggle as backup (30 GPU h/week); keep pre-generated outputs for the demo |
 | Transformers/diffusers version breaks the model's remote code | Versions pinned in `requirements-model.txt`; if it breaks, pin to the version Colab shows working and note it |
-| Bad style photo, giving garbage style | UI preview of detected lines; tips in `samples/style/README.md` |
+| Bad style photo, giving garbage style | UI preview of detected lines; tips in `samples/style/README.md`; or skip the photo and pick a **sample handwriting** |
+| Library transcriptions don't match the image | IAM text is tokenised (`chosen ,`); `library.clean_text` rejoins punctuation, and lines with quotes, spelled-out initials (`B B C`) or odd symbols are skipped |
 | OCR misreads the style sample | Low-confidence lines are flagged; user corrects before generating. A wrong transcription would teach the model the wrong letter shapes, so correction matters |
 | Transcription doesn't match the lines | Hard error with a clear message (count mismatch) |
 | Long style lines are slow (the model has no KV-cache) | References are auto-shortened at a word gap to ≤ 768 px |
@@ -186,5 +194,6 @@ Expected story: Emuru is much closer to the real writer (KID, visual comparison)
 
 - V. Pippi, F. Quattrini, S. Cascianelli, A. Tonioni, R. Cucchiara. *Zero-Shot Styled Text Image Generation, but Make It Autoregressive.* CVPR 2025. [arXiv:2503.17074](https://arxiv.org/abs/2503.17074) · [weights](https://huggingface.co/blowing-up-groundhogs/emuru) · [code](https://github.com/aimagelab/Emuru-autoregressive-text-img)
 - B. Vanherle et al. *VATr++: Choose Your Words Wisely for Handwritten Text Generation.* 2024. [arXiv:2402.10798](https://arxiv.org/abs/2402.10798)
+- U.-V. Marti, H. Bunke. *The IAM-database: an English sentence database for offline handwriting recognition.* IJDAR 2002 (sample handwritings, via [`Teklia/IAM-line`](https://huggingface.co/datasets/Teklia/IAM-line))
 - M. Li et al. *TrOCR: Transformer-based OCR with Pre-trained Models.* AAAI 2023 (`microsoft/trocr-base-handwritten`)
 - Binkowski et al. *Demystifying MMD GANs* (KID), ICLR 2018; Heusel et al. *GANs Trained by a Two Time-Scale Update Rule* (FID), NeurIPS 2017

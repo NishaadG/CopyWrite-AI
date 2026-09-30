@@ -3,6 +3,7 @@
 Give it your notes as text and a photo of a few lines of your handwriting. It writes the notes onto ruled, plain, grid or photographed pages **in your handwriting**, then exports PNG + PDF.
 
 - **AI model:** [Emuru](https://huggingface.co/blowing-up-groundhogs/emuru) (CVPR 2025), a VAE + T5 Transformer that imitates an unseen handwriting from a single line (zero-shot).
+- **Sample handwritings:** 36 real writers from the [IAM database](https://huggingface.co/datasets/Teklia/IAM-line), so you can try it without photographing your own.
 - **Handwriting OCR:** [TrOCR](https://huggingface.co/microsoft/trocr-base-handwritten) reads your sample automatically; you only fix its mistakes.
 - **Classical layout engine:** word wrap, ruled-line detection, baseline alignment, natural jitter, ink blending.
 - **Baseline for comparison:** a jittered handwriting font (no AI).
@@ -10,21 +11,37 @@ Give it your notes as text and a photo of a few lines of your handwriting. It wr
 
 Full design: [`docs/DESIGN.md`](docs/DESIGN.md)
 
-## Quick start
+## How to run it
 
-### A) On a free GPU (recommended, real results)
-1. Push this repo to GitHub.
-2. Open [`notebooks/run_on_colab.ipynb`](notebooks/run_on_colab.ipynb) in Google Colab (or Kaggle) with a **T4 GPU**.
-3. Set `REPO_URL`, run all cells, and open the `*.gradio.live` link it prints.
+### Option A: Google Colab (free GPU, real AI handwriting). Use this for results and the demo.
 
-### B) On your laptop (no GPU, font baseline, good for development)
+1. Click this link: **[Open the notebook in Colab](https://colab.research.google.com/github/NishaadG/CopyWrite-AI/blob/main/notebooks/run_on_colab.ipynb)**. Sign in with a Google account if asked.
+2. In Colab: **Runtime → Change runtime type → T4 GPU → Save**.
+3. **Runtime → Run all** (`Ctrl+F9`). If Colab warns "This notebook was not authored by Google", click **Run anyway**.
+4. Wait 3-5 minutes. The last cell prints `Running on public URL: https://xxxx.gradio.live`. **Click that link.**
+5. Use the app (below). Leave the Colab tab open; closing it stops the app after a while.
+
+**After you change the code:** `git push` from your laptop, then in Colab do **Runtime → Restart session and run all**. The notebook pulls the latest code automatically.
+
+### Option B: your laptop (no GPU needed; shows a simple font instead of the AI model)
+Good for trying the interface and working on the layout. The AI model is switched off automatically when there is no GPU.
 ```bash
 python -m venv .venv
-.venv\Scripts\activate            # Windows  (source .venv/bin/activate on Mac/Linux)
+.venv\Scripts\activate          # Windows   (Mac/Linux: source .venv/bin/activate)
 pip install -r requirements.txt
-python app.py --backend font      # open http://127.0.0.1:7860
+python app.py                      # then open http://127.0.0.1:7860 in your browser
 ```
-To try the AI model on CPU (slow, needs ~8 GB free RAM): `pip install -r requirements-model.txt` and pick `emuru` in the UI.
+
+## Using the app
+
+1. **Choose a handwriting**
+   - **Sample handwritings** tab: 36 real handwritings from the IAM database. Click one; the highlighted one is used. No photo or typing needed.
+   - **My own handwriting** tab: upload a photo of 2-5 lines of your writing, click **Read my handwriting**, and fix any wrong words in the text box. The text must match your writing exactly.
+2. **What should it write?** Paste your notes (an example is already filled in) or upload a `.txt` / `.docx`. Each new line starts a new paragraph.
+3. **Page:** choose ruled / plain / grid paper (or a photo of a real page), the ink colour and the handwriting size. **More options** has page size, line spacing, margin, messiness, engine and seed.
+4. Click **Write my notes**. The pages appear on the right; **Download PDF** is below them.
+
+Tips: if the writing is too big or small for the lines, change **Handwriting size**. Different samples write at different widths, so try a few. The first generation on Colab is slow (the model is loading), and later ones are much faster.
 
 ### Command line
 ```bash
@@ -32,7 +49,7 @@ python -m copywrite.cli --text samples/text/sample_notes.txt \
   --style samples/style/me.jpg \
   --backend emuru --background ruled --ink blue --out outputs/run1
 ```
-Without `--style-text`, OCR reads your sample and prints what it read; save a corrected copy and pass it with `--style-text me.txt` if needed. Add `--watermark` for the optional watermark (needs `pip install invisible-watermark`).
+Without `--style-text`, OCR reads your sample and prints what it read. Save a corrected copy and pass it with `--style-text me.txt` if needed. Add `--watermark` for the optional watermark (needs `pip install invisible-watermark`).
 
 ## How to take a good style photo
 - 2-5 lines of your normal writing, 4-8 words each, in the pen you want to imitate.
@@ -52,6 +69,7 @@ app.py                      Gradio web UI
 copywrite/
   preprocess.py             photo -> clean 64px style lines
   ocr.py                    TrOCR auto-transcription of your sample (+ confidence)
+  library.py                sample handwritings (IAM lines, downloaded + cached on first use)
   backends.py               EmuruGenerator (AI) / FontGenerator (baseline)
   background.py             page templates, ruled-line + margin detection
   layout.py                 wrapping, placement, jitter, ink compositing
@@ -65,4 +83,4 @@ samples/                    example text; put your handwriting photos in samples
 ```
 
 ## Credits
-Emuru by Pippi, Quattrini, Cascianelli, Tonioni and Cucchiara (AImageLab, CVPR 2025, MIT license). TrOCR by Microsoft (MIT).
+Emuru by Pippi, Quattrini, Cascianelli, Tonioni and Cucchiara (AImageLab, CVPR 2025, MIT license). TrOCR by Microsoft (MIT). Sample handwritings from the IAM Handwriting Database (Marti & Bunke, 2002) via `Teklia/IAM-line`; downloaded at runtime, not redistributed here.

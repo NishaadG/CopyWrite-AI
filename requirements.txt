@@ -3,4 +3,7 @@ numpy
 pillow>=10
 opencv-python-headless
 python-docx
-gradio>=4.44
+gradio>=5,<7
+# sample-handwriting library (downloads IAM lines from Hugging Face)
+huggingface_hub
+pyarrow

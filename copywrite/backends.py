@@ -14,6 +14,7 @@ Contract for every backend:
 import glob
 import os
 import random
+import threading
 from typing import List, Optional
 
 import numpy as np
@@ -42,18 +43,20 @@ class EmuruGenerator(LineGenerator):
     def __init__(self, device: Optional[str] = None):
         self.device = device
         self.model = None
+        self._lock = threading.Lock()  # the app preloads in a background thread
 
     def load(self):
-        if self.model is not None:
-            return
-        import torch
-        from transformers import AutoModel
+        with self._lock:
+            if self.model is not None:
+                return
+            import torch
+            from transformers import AutoModel
 
-        if self.device is None:
-            self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.torch = torch
-        self.model = AutoModel.from_pretrained(self.MODEL_ID, trust_remote_code=True)
-        self.model.to(self.device).eval()
+            if self.device is None:
+                self.device = "cuda" if torch.cuda.is_available() else "cpu"
+            self.torch = torch
+            model = AutoModel.from_pretrained(self.MODEL_ID, trust_remote_code=True)
+            self.model = model.to(self.device).eval()
 
     def _style_tensor(self, style: StyleRef):
         from torchvision.transforms import functional as F
