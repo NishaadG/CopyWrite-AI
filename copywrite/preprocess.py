@@ -115,10 +115,61 @@ def crop_to_ink(gray: np.ndarray, pad: int = 6) -> np.ndarray:
     return gray[y0:y1, x0:x1]
 
 
+def drop_neighbour_strokes(gray: np.ndarray) -> np.ndarray:
+    """Erase bits of the lines above/below that leak into a line crop.
+
+    A connected blob is a neighbour's stroke if it doesn't reach this line's core band (the
+    rows where most of the ink is) and either touches the top/bottom edge of the crop or sits
+    well below the baseline. Our own ascenders/descenders are attached to letters in the core
+    band, and i-dots/apostrophes sit just above it, so they are kept.
+    """
+    mask = ink_mask(gray).astype(np.uint8)
+    rows = mask.sum(axis=1)
+    if rows.max() == 0:
+        return gray
+    # core = the contiguous dense run around the densest row (a neighbour's band is not contiguous)
+    dense = rows > rows.max() * 0.3
+    c0 = c1 = int(np.argmax(rows))
+    while c0 > 0 and dense[c0 - 1]:
+        c0 -= 1
+    while c1 < len(rows) - 1 and dense[c1 + 1]:
+        c1 += 1
+    below = c1 + 0.25 * (c1 - c0)  # commas/periods start at the baseline; next line's tips start lower
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
+    drop = np.zeros_like(mask)
+    h = gray.shape[0]
+    for k in range(1, n):
+        top, height = stats[k, cv2.CC_STAT_TOP], stats[k, cv2.CC_STAT_HEIGHT]
+        bottom = top + height - 1
+        # from the line above only narrow descender tips leak in; a wide blob is e.g. a T's bar
+        tip_above = top == 0 and bottom < c0 and stats[k, cv2.CC_STAT_WIDTH] < 0.6 * (c1 - c0 + 1)
+        if tip_above or (bottom == h - 1 and top > c1) or top > below:
+            drop[labels == k] = 1
+    if not drop.any():
+        return gray
+    out = gray.copy()
+    out[cv2.dilate(drop, np.ones((5, 5), np.uint8)) > 0] = 255  # dilate: also clear the faint stroke edges
+    return out
+
+
+def normalize_contrast(gray: np.ndarray) -> np.ndarray:
+    """Pure white paper, near-black ink - the look of Emuru's training images."""
+    mask = ink_mask(gray)
+    if not mask.any() or mask.all():
+        return gray
+    paper = float(np.median(gray[~mask]))
+    ink = float(np.percentile(gray[mask], 10))
+    if paper - ink < 20:
+        return gray
+    out = (gray.astype(np.float32) - ink) * 255.0 / (paper * 0.97 - ink)
+    return np.clip(out, 0, 255).astype(np.uint8)
+
+
 def to_style_height(gray: np.ndarray, height: int = STYLE_HEIGHT) -> Image.Image:
     h, w = gray.shape
     new_w = max(8, int(round(w * height / h)))
-    return Image.fromarray(gray).resize((new_w, height), Image.LANCZOS)
+    img = Image.fromarray(gray).resize((new_w, height), Image.LANCZOS)
+    return Image.fromarray(normalize_contrast(np.array(img)))
 
 
 def detect_style_lines(images: List[Union[str, Image.Image]], remove_lines: bool = True) -> List[Image.Image]:
@@ -129,7 +180,7 @@ def detect_style_lines(images: List[Union[str, Image.Image]], remove_lines: bool
         gray = flatten_illumination(_to_gray(img))
         if remove_lines:
             gray = remove_ruling(gray)
-        crops.extend(Image.fromarray(crop_to_ink(c)) for c in split_lines(gray))
+        crops.extend(Image.fromarray(crop_to_ink(drop_neighbour_strokes(c))) for c in split_lines(gray))
     return crops
 
 
@@ -212,4 +263,4 @@ def single_ref(image: Union[str, Image.Image], text: str, remove_lines: bool = T
     gray = flatten_illumination(_to_gray(image))
     if remove_lines:
         gray = remove_ruling(gray)
-    return StyleRef(image=to_style_height(crop_to_ink(gray)), text=text.strip())
+    return StyleRef(image=to_style_height(crop_to_ink(drop_neighbour_strokes(gray))), text=text.strip())
