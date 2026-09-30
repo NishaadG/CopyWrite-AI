@@ -121,38 +121,58 @@ def to_style_height(gray: np.ndarray, height: int = STYLE_HEIGHT) -> Image.Image
     return Image.fromarray(gray).resize((new_w, height), Image.LANCZOS)
 
 
-def prepare_style_refs(
-    images: List[Union[str, Image.Image]],
-    transcription: str,
-    remove_lines: bool = True,
-) -> List[StyleRef]:
-    """Build StyleRefs from one or more photos.
-
-    `transcription` has one line of text per handwritten line, in reading order,
-    across all images. (e.g. photo 1 has 3 lines, photo 2 has 2 -> 5 lines of text)
-    """
-    wanted = [t.strip() for t in transcription.strip().splitlines() if t.strip()]
-    crops: List[np.ndarray] = []
+def detect_style_lines(images: List[Union[str, Image.Image]], remove_lines: bool = True) -> List[Image.Image]:
+    """Clean the photo(s) and return each handwritten line as a tightly cropped,
+    full-resolution grayscale image (reading order, across all photos)."""
+    crops: List[Image.Image] = []
     for img in images:
         gray = flatten_illumination(_to_gray(img))
         if remove_lines:
             gray = remove_ruling(gray)
-        crops.extend(split_lines(gray))
+        crops.extend(Image.fromarray(crop_to_ink(c)) for c in split_lines(gray))
+    return crops
 
-    if len(crops) != len(wanted):
+
+def build_refs(line_images: List[Image.Image], transcription: Union[str, List[str]]) -> List[StyleRef]:
+    """Pair detected line images with their text (one text line per image)."""
+    if isinstance(transcription, str):
+        wanted = [t.strip() for t in transcription.strip().splitlines() if t.strip()]
+    else:
+        wanted = [t.strip() for t in transcription if t and t.strip()]
+    if len(line_images) != len(wanted):
         raise ValueError(
-            f"Found {len(crops)} handwritten line(s) in the photo(s) but {len(wanted)} line(s) of "
-            f"transcription. Type exactly one transcription line per handwritten line "
+            f"Found {len(line_images)} handwritten line(s) in the photo(s) but {len(wanted)} line(s) of "
+            f"transcription. Keep exactly one transcription line per handwritten line "
             f"(or crop the photo to fewer lines)."
         )
-
     refs = []
-    for crop, text in zip(crops, wanted):
-        img = to_style_height(crop_to_ink(crop))
+    for crop, text in zip(line_images, wanted):
+        img = to_style_height(np.array(crop.convert("L")))
         if img.width > MAX_STYLE_WIDTH:
             img, text = shorten_ref(img, text, MAX_STYLE_WIDTH)
         refs.append(StyleRef(image=img, text=text))
     return refs
+
+
+def prepare_style_refs(
+    images: List[Union[str, Image.Image]],
+    transcription: Optional[str] = None,
+    remove_lines: bool = True,
+    ocr_model: Optional[str] = None,
+) -> List[StyleRef]:
+    """Build StyleRefs from one or more photos.
+
+    `transcription` has one line of text per handwritten line, in reading order, across all
+    images. If it is empty/None, the lines are read automatically with handwriting OCR.
+    """
+    lines = detect_style_lines(images, remove_lines)
+    if not lines:
+        raise ValueError("No handwriting found in the photo(s).")
+    if not transcription or not transcription.strip():
+        from .ocr import DEFAULT_MODEL, transcribe_lines
+
+        transcription = [r.text for r in transcribe_lines(lines, ocr_model or DEFAULT_MODEL)]
+    return build_refs(lines, transcription)
 
 
 def word_gaps(img: Image.Image) -> List[int]:

@@ -1,7 +1,8 @@
 """Evaluation for the report ("Implementation & Results").
 
 Protocol (per writer):
-  1. The writer writes ~10-15 lines by hand. Photograph them, type the transcription.
+  1. The writer writes ~10-15 lines by hand. Photograph them and write a transcription file
+     (tip: run the app's 'Read my handwriting' OCR and correct it - ground truth must be exact).
   2. The first K lines are the STYLE references given to the model.
   3. The remaining lines are the REAL test set. We ask each backend to write the *same*
      sentences, so real and generated lines can be compared directly.
@@ -12,7 +13,7 @@ Metrics:
   - KID / FID (torchmetrics) between generated and real line images -> realism.
     With few lines, report KID (FID is unreliable below a few hundred images).
   - seconds per line -> speed / feasibility.
-  - a side-by-side sheet (real vs AI vs font) to use in slides and for the human study.
+  - a side-by-side sheet (real vs AI vs font) to use in the report and slides.
 
 Usage:
   python scripts/evaluate.py --photos writer1.jpg --text writer1.txt --k 2 \
@@ -32,10 +33,11 @@ from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from hwgen.backends import get_generator  # noqa: E402
-from hwgen.io_utils import read_text_file  # noqa: E402
-from hwgen.layout import trim_width  # noqa: E402
-from hwgen.preprocess import prepare_style_refs  # noqa: E402
+from copywrite.backends import get_generator  # noqa: E402
+from copywrite.io_utils import read_text_file  # noqa: E402
+from copywrite.layout import trim_width  # noqa: E402
+from copywrite.preprocess import prepare_style_refs  # noqa: E402
+from copywrite.ocr import get_ocr  # noqa: E402
 
 
 def levenshtein(a: str, b: str) -> int:
@@ -50,23 +52,6 @@ def levenshtein(a: str, b: str) -> int:
 
 def cer(pred: str, truth: str) -> float:
     return levenshtein(pred.strip(), truth.strip()) / max(1, len(truth.strip()))
-
-
-class OCR:
-    def __init__(self, model_id="microsoft/trocr-base-handwritten"):
-        from transformers import TrOCRProcessor, VisionEncoderDecoderModel
-        import torch
-
-        self.torch = torch
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.proc = TrOCRProcessor.from_pretrained(model_id)
-        self.model = VisionEncoderDecoderModel.from_pretrained(model_id).to(self.device).eval()
-
-    def __call__(self, img: Image.Image) -> str:
-        px = self.proc(images=img.convert("RGB"), return_tensors="pt").pixel_values.to(self.device)
-        with self.torch.no_grad():
-            ids = self.model.generate(px, max_new_tokens=96)
-        return self.proc.batch_decode(ids, skip_special_tokens=True)[0]
 
 
 def to_fixed(img: Image.Image, w=512, h=64) -> np.ndarray:
@@ -141,7 +126,7 @@ def main():
     refs, test = lines[: args.k], lines[args.k:]
     print(f"{len(refs)} style lines, {len(test)} real test lines")
 
-    ocr = None if args.no_ocr else OCR()
+    ocr = None if args.no_ocr else get_ocr()
     results, summary = [], {}
     real_imgs = [t.image for t in test]
     gen_imgs = {}

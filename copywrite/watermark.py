@@ -10,14 +10,14 @@ print-and-rescan - worth a line in the reflective journal.
 import numpy as np
 from PIL import Image
 
-PAYLOAD_BYTES = 8
+PAYLOAD_BYTES = 12
 
 
 def _payload(text: str) -> bytes:
     return text.encode("utf-8")[:PAYLOAD_BYTES].ljust(PAYLOAD_BYTES, b"\0")
 
 
-def embed(page: Image.Image, text: str = "HWGEN") -> Image.Image:
+def embed(page: Image.Image, text: str = "COPYWRITE") -> Image.Image:
     try:
         from imwatermark import WatermarkEncoder
     except ImportError as e:

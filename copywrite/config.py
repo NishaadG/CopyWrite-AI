@@ -52,7 +52,7 @@ class PageConfig:
 
     # Optional invisible watermark (off by default)
     watermark: bool = False
-    watermark_text: str = "HWGEN"
+    watermark_text: str = "COPYWRITE"
 
     # Generation
     batch_size: int = 8

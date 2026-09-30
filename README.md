@@ -1,8 +1,9 @@
-# ✍️ Handwritten Notes Generator
+# ✍️ CopyWrite AI
 
 Give it your notes as text and a photo of a few lines of your handwriting. It writes the notes onto ruled, plain, grid or photographed pages **in your handwriting**, then exports PNG + PDF.
 
 - **AI model:** [Emuru](https://huggingface.co/blowing-up-groundhogs/emuru) (CVPR 2025), a VAE + T5 Transformer that imitates an unseen handwriting from a single line (zero-shot).
+- **Handwriting OCR:** [TrOCR](https://huggingface.co/microsoft/trocr-base-handwritten) reads your sample automatically; you only fix its mistakes.
 - **Classical layout engine:** word wrap, ruled-line detection, baseline alignment, natural jitter, ink blending.
 - **Baseline for comparison:** a jittered handwriting font (no AI).
 - **Optional** invisible watermark.
@@ -27,17 +28,16 @@ To try the AI model on CPU (slow, needs ~8 GB free RAM): `pip install -r require
 
 ### Command line
 ```bash
-python -m hwgen.cli --text samples/text/sample_notes.txt \
-  --style samples/style/me.jpg --style-text samples/style/me.txt \
+python -m copywrite.cli --text samples/text/sample_notes.txt \
+  --style samples/style/me.jpg \
   --backend emuru --background ruled --ink blue --out outputs/run1
 ```
-Add `--watermark` for the optional watermark (needs `pip install invisible-watermark`).
+Without `--style-text`, OCR reads your sample and prints what it read; save a corrected copy and pass it with `--style-text me.txt` if needed. Add `--watermark` for the optional watermark (needs `pip install invisible-watermark`).
 
 ## How to take a good style photo
 - 2-5 lines of your normal writing, 4-8 words each, in the pen you want to imitate.
 - Shoot from directly above in even light.
-- In the transcription box, type **exactly** what each line says, one line per handwritten line.
-- Use **"Check style lines"** in the UI to confirm the lines were detected correctly.
+- Click **"Read my handwriting"**: the lines are detected and read by OCR. Fix any wrong words in the text box (flagged lines first). The text must match your writing exactly.
 
 ## Evaluation
 ```bash
@@ -49,8 +49,9 @@ This writes per-line OCR CER (TrOCR), KID/FID vs. your real lines, seconds per l
 ## Project structure
 ```
 app.py                      Gradio web UI
-hwgen/
+copywrite/
   preprocess.py             photo -> clean 64px style lines
+  ocr.py                    TrOCR auto-transcription of your sample (+ confidence)
   backends.py               EmuruGenerator (AI) / FontGenerator (baseline)
   background.py             page templates, ruled-line + margin detection
   layout.py                 wrapping, placement, jitter, ink compositing
@@ -64,4 +65,4 @@ samples/                    example text; put your handwriting photos in samples
 ```
 
 ## Credits
-Emuru by Pippi, Quattrini, Cascianelli, Tonioni and Cucchiara (AImageLab, CVPR 2025, MIT license). TrOCR by Microsoft.
+Emuru by Pippi, Quattrini, Cascianelli, Tonioni and Cucchiara (AImageLab, CVPR 2025, MIT license). TrOCR by Microsoft (MIT).

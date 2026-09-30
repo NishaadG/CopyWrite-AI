@@ -1,4 +1,4 @@
-# Handwritten Notes Generator: System Design (MVP)
+# CopyWrite AI: System Design (MVP)
 
 **Course:** Generative AI (Final Year B.Tech IT, Sem I, 2026-27): Mini Project
 **One line:** Type (or upload) your notes and a photo of a few lines of your handwriting, and get back ruled-notebook pages written in *your* handwriting, as PNG/PDF.
@@ -13,6 +13,7 @@
 | **Weak laptop (no usable GPU)** | Heavy model runs on a **free cloud GPU** (Colab/Kaggle T4). The laptop only does coding, the light parts, and a browser. |
 | **Must be on GitHub** | Everything is code + a notebook; personal handwriting photos are git-ignored. |
 | **Graded on methodology, implementation + results, presentation** | Pick a model that maps cleanly onto the syllabus, and build a proper **baseline comparison + metrics**. |
+| **No manual typing of the sample** | Handwriting **OCR (TrOCR)** reads the style photo and flags lines it is unsure of; the user only fixes mistakes. |
 | **Ethics not required in MVP** | Watermark is an **optional toggle** (off by default). A short ethics reflection is still needed for the *Reflective Journal*, not for the build. |
 
 ## 2. The key decision: which model
@@ -27,6 +28,7 @@ Why it fits:
   - **Module 2:** a **Variational Autoencoder** (convolutional VAE) compresses text images into latents.
   - **Module 3:** a **T5 Transformer** (encoder-decoder, attention) autoregressively predicts the next image latent, conditioned on text and style, just like GPT predicts the next token.
   - **Module 2 evaluation:** FID / KID.
+  - **Module 3 (Vision Transformer):** TrOCR (ViT encoder + Transformer decoder) reads the user's handwriting sample, so no typing is needed.
 
 **How it works (for the report):**
 1. The style image (64 px tall) is encoded by the VAE into a sequence of latent "columns", one every 8 px of width.
@@ -62,8 +64,11 @@ Demo-day tip: start the Colab session ~10 min before, keep a **pre-generated PDF
 ```mermaid
 flowchart LR
     A[Text box / .txt / .docx] --> P
-    S[Photo of 1-5 handwritten lines<br/>+ typed transcription] --> PRE[Style preprocessing<br/>light flattening · ruling removal ·<br/>line split · crop · resize to 64px]
-    PRE --> P[Pipeline]
+    S[Photo of 2-5 handwritten lines] --> PRE[Style preprocessing<br/>light flattening · ruling removal ·<br/>line split · crop]
+    PRE --> OCR[TrOCR reads each line<br/>+ confidence]
+    OCR --> FIX[User checks / corrects text]
+    FIX --> REF[Style references<br/>64px image + exact text]
+    REF --> P[Pipeline]
     B[Background: ruled / plain / grid<br/>or photo of a page] --> BG[Background module<br/>ruled-line detection · margin detection]
     BG --> P
     P --> CAL[Calibrate: write one sentence,<br/>measure px per char]
@@ -79,13 +84,14 @@ flowchart LR
 
 | File | Responsibility |
 |---|---|
-| `hwgen/preprocess.py` | Phone photo → clean style lines: illumination flattening, notebook-line removal, projection-profile line split, crop, 64 px resize, safe shortening of long lines |
-| `hwgen/backends.py` | `EmuruGenerator` (AI), `FontGenerator` (baseline). Same interface: `generate(text, style) → line image` |
-| `hwgen/background.py` | Page templates; ruled-line and margin detection on photos (morphology + peak finding); line slots |
-| `hwgen/layout.py` | Word wrap, baseline estimation, scaling/overflow handling, jitter, multiply-blend compositing |
-| `hwgen/pipeline.py` | Orchestration: calibrate → wrap → batched generation → pages; returns timing stats |
-| `hwgen/watermark.py` | Optional invisible DWT-DCT watermark (embed + detect) |
-| `hwgen/cli.py`, `app.py` | Command line and Gradio UI |
+| `copywrite/preprocess.py` | Phone photo → clean style lines: illumination flattening, notebook-line removal, projection-profile line split, crop, 64 px resize, safe shortening of long lines |
+| `copywrite/ocr.py` | TrOCR handwriting OCR: reads the style lines with a confidence score (auto-transcription); reused for the legibility metric |
+| `copywrite/backends.py` | `EmuruGenerator` (AI), `FontGenerator` (baseline). Same interface: `generate(text, style) → line image` |
+| `copywrite/background.py` | Page templates; ruled-line and margin detection on photos (morphology + peak finding); line slots |
+| `copywrite/layout.py` | Word wrap, baseline estimation, scaling/overflow handling, jitter, multiply-blend compositing |
+| `copywrite/pipeline.py` | Orchestration: calibrate → wrap → batched generation → pages; returns timing stats |
+| `copywrite/watermark.py` | Optional invisible DWT-DCT watermark (embed + detect) |
+| `copywrite/cli.py`, `app.py` | Command line and Gradio UI |
 | `scripts/evaluate.py` | CER (TrOCR), KID/FID, speed, comparison sheet |
 | `notebooks/run_on_colab.ipynb` | One-click GPU run |
 
@@ -93,7 +99,7 @@ flowchart LR
 
 **Inputs**
 - **Content:** typed text, or a `.txt` / `.md` / `.docx` upload. Each line break starts a new paragraph (indented).
-- **Style:** 1-5 photos of *normal* writing (2-5 lines of 4-8 words is ideal) + the transcription, one line per handwritten line. Transcription is typed by the user in the MVP; OCR can fill it in later.
+- **Style:** 1-5 photos of *normal* writing (2-5 lines of 4-8 words is ideal). **OCR reads the lines automatically**; the user only corrects mistakes (lines under 80% confidence are flagged).
 - **Page:** background (ruled / plain / grid / uploaded photo), page size, line spacing, text size, left margin, "messiness", ink colour, seed.
 - **Options:** watermark on/off, backend (emuru / font).
 
@@ -103,6 +109,7 @@ flowchart LR
 
 | Requirement | How |
 |---|---|
+| No typing of the sample | TrOCR auto-transcribes; user corrects flagged lines |
 | Few-shot style from 1-5 samples | Emuru's zero-shot conditioning on a style line. Multiple lines are rotated across the output. |
 | Unseen characters | The model infers them from the style; expect lower fidelity for rare characters. Report this honestly as a limitation. |
 | Natural variance | (1) Emuru is deterministic per (style, text), so variety comes from **rotating between the user's style lines**. (2) The **layout adds human noise**: per-line baseline wobble, small rotation, size change, uneven left start. (3) Every word is generated in context, so repeated letters already differ. |
@@ -120,10 +127,11 @@ Protocol per writer (3-5 friends are enough): each writes ~12 lines. **2 lines**
 | **CER** of a handwriting OCR (TrOCR) | Legibility. The CER of the real lines is the reference. | `scripts/evaluate.py` |
 | **KID** (and FID with 64-d features) | Realism: distance between generated and real line images. Say in the report that FID needs many samples, so KID is the primary number. | torchmetrics |
 | **Speed** | Seconds per line and per page on a T4 vs CPU | pipeline stats |
-| **Human study** | 10-15 classmates: (a) "Which of these two lines is real?" (b) "Is this the same writer as the sample? 1-5" | Google Form using `comparison_sheet.png` crops |
+| **Visual comparison** | Real vs. AI vs. font lines for the same sentence, side by side | `comparison_sheet.png` |
+| **OCR accuracy on style samples** | How many characters the user had to correct after auto-transcription | CER of OCR vs. corrected text |
 | **Ablations** (pick 1-2) | 1 vs 3 style lines; ruling removal on/off; jitter 0 vs 1 | same script |
 
-Expected story: Emuru ≫ font baseline on "same writer" and realism, with similar or slightly worse CER. Rare characters and digits are the weak spot.
+Expected story: Emuru is much closer to the real writer (KID, visual comparison) than the font baseline, with similar or slightly worse CER. Rare characters and digits are the weak spot.
 
 ## 8. Build plan (≈5 working days)
 
@@ -132,10 +140,10 @@ Expected story: Emuru ≫ font baseline on "same writer" and realism, with simil
 | **1** | Repo on GitHub; laptop runs `python app.py --backend font`; Colab notebook runs the sanity cell | You see an AI-generated line in your own writing on Colab |
 | **2** | Real style photos from 3-5 people; tune preprocessing (check the "Check style lines" preview); tune `text_scale` and baseline so text sits on the lines | A full ruled page from Emuru that looks right |
 | **3** | Photo backgrounds; `.docx` input; PDF; optional watermark; UI polish | Demo flow works end to end from the share link |
-| **4** | Evaluation: run `evaluate.py` per writer, human-study form, 1 ablation | Results table + comparison figure |
+| **4** | Evaluation: run `evaluate.py` per writer, 1 ablation | Results table + comparison figure |
 | **5** | Report / slides / README screenshots; Reflective Journal | Submission ready |
 
-**If you only have 2-3 days:** Day 1 + 2 as above, then Day 3 = CER + comparison sheet only (skip KID and the human study), and write the report.
+**If you only have 2-3 days:** Day 1 + 2 as above, then Day 3 = CER + comparison sheet only (skip KID and the ablation), and write the report.
 
 ## 9. Risks and mitigations
 
@@ -144,6 +152,7 @@ Expected story: Emuru ≫ font baseline on "same writer" and realism, with simil
 | Colab disconnects / GPU quota | Kaggle as backup (30 GPU h/week); keep pre-generated outputs for the demo |
 | Transformers/diffusers version breaks the model's remote code | Versions pinned in `requirements-model.txt`; if it breaks, pin to the version Colab shows working and note it |
 | Bad style photo, giving garbage style | UI preview of detected lines; tips in `samples/style/README.md` |
+| OCR misreads the style sample | Low-confidence lines are flagged; user corrects before generating. A wrong transcription would teach the model the wrong letter shapes, so correction matters |
 | Transcription doesn't match the lines | Hard error with a clear message (count mismatch) |
 | Long style lines are slow (the model has no KV-cache) | References are auto-shortened at a word gap to ≤ 768 px |
 | Model doesn't stop, or makes an over-long line | `max_new_tokens` capped from estimated width; overflow squeeze/shrink |
@@ -151,7 +160,7 @@ Expected story: Emuru ≫ font baseline on "same writer" and realism, with simil
 
 ## 10. Future scope (post-MVP)
 
-1. **OCR input:** photo of a printed page → text (TrOCR/Tesseract) → rewrite in your hand. Also auto-fill the style transcription.
+1. **OCR for content:** photo of a printed page or textbook → text (TrOCR-printed / Tesseract) → rewrite in your hand.
 2. **Personalisation by fine-tuning with LoRA** (Module 3) on 20-50 of the user's lines, for higher fidelity than zero-shot.
 3. **Lighting and shadow adaptation**, and paper warp matching, for page photos.
 4. **Headings, underlines, bullet points, diagrams, simple math** in the layout.
@@ -169,7 +178,7 @@ Expected story: Emuru ≫ font baseline on "same writer" and realism, with simil
 | Rubric item | Where it's covered |
 |---|---|
 | Problem understanding and methodology (4) | Sections 1, 2, 4 and 6: pretrained VAE + Transformer vs. font baseline, with justification |
-| Implementation and results (4) | Working app + CLI + evaluation table, comparison figure, human study (Sections 7-8) |
+| Implementation and results (4) | Working app + CLI + evaluation table, comparison figure (Sections 7-8) |
 | Presentation and documentation (2) | This doc, README with screenshots, live demo through the share link |
 | Reflective Journal: concept, challenges, improvement | Sections 2, 9, 10 and 11 |
 

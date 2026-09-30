@@ -1,4 +1,4 @@
-"""hwgen - handwritten notes generator.
+"""CopyWrite AI - write your notes in your own handwriting.
 
 Few-shot styled handwriting generation (Emuru: VAE + T5 Transformer) + a classical
 layout engine that writes the result onto ruled / plain / photographed pages.

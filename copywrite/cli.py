@@ -1,7 +1,7 @@
 """Command-line entry point (useful in Colab/Kaggle, for batch runs and for evaluation).
 
 Example:
-    python -m hwgen.cli --text samples/text/sample_notes.txt \
+    python -m copywrite.cli --text samples/text/sample_notes.txt \
         --style samples/style/my_lines.jpg --style-text samples/style/my_lines.txt \
         --backend emuru --background ruled --out outputs/run1
 """
@@ -22,8 +22,9 @@ def main():
     ap = argparse.ArgumentParser(description="Generate handwritten notes in your handwriting.")
     ap.add_argument("--text", required=True, help=".txt / .md / .docx file with the content")
     ap.add_argument("--style", nargs="+", required=True, help="photo(s) of your handwriting")
-    ap.add_argument("--style-text", required=True,
-                    help="file (or literal string) with the transcription, one line per handwritten line")
+    ap.add_argument("--style-text", default=None,
+                    help="file (or literal string) with the transcription, one line per handwritten line. "
+                         "If omitted, the lines are read automatically with handwriting OCR (TrOCR).")
     ap.add_argument("--backend", default="emuru", choices=["emuru", "font"])
     ap.add_argument("--background", default="ruled", choices=["ruled", "plain", "grid", "photo"])
     ap.add_argument("--background-photo", default=None)
@@ -38,12 +39,19 @@ def main():
     ap.add_argument("--out", default="outputs/run")
     args = ap.parse_args()
 
-    try:
-        style_text = read_text_file(args.style_text)
-    except (FileNotFoundError, OSError):
-        style_text = args.style_text
+    style_text = None
+    if args.style_text:
+        try:
+            style_text = read_text_file(args.style_text)
+        except (FileNotFoundError, OSError):
+            style_text = args.style_text
 
     refs = prepare_style_refs(args.style, style_text, remove_lines=not args.keep_ruling)
+    if not style_text:
+        print("OCR read the style lines as:")
+        for r in refs:
+            print("   ", r.text)
+        print("If any line is wrong, save the corrected text to a file and pass it with --style-text.")
     ink = INK_COLORS.get(args.ink) or hex_to_rgb(args.ink)
     cfg = PageConfig(background=args.background, ink_color=ink, line_spacing_mm=args.line_spacing_mm,
                      text_scale=args.text_scale, jitter=args.jitter, seed=args.seed,

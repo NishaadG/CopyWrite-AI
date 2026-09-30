@@ -1,4 +1,4 @@
-"""Gradio web UI.
+"""CopyWrite AI - Gradio web UI.
 
 Local (laptop, no GPU):   python app.py --backend font
 Colab / Kaggle (GPU):     python app.py --share          -> open the public *.gradio.live link
@@ -11,17 +11,17 @@ import tempfile
 
 import gradio as gr
 
-from hwgen.backends import get_generator
-from hwgen.config import INK_COLORS, PAGE_SIZES_MM, PageConfig, hex_to_rgb
-from hwgen.io_utils import read_text_file, save_pages
-from hwgen.pipeline import generate_document
-from hwgen.preprocess import prepare_style_refs
+from copywrite.backends import get_generator
+from copywrite.config import INK_COLORS, PAGE_SIZES_MM, PageConfig, hex_to_rgb
+from copywrite.io_utils import read_text_file, save_pages
+from copywrite.pipeline import generate_document
+from copywrite.preprocess import build_refs, detect_style_lines
 
 _GENERATORS = {}
 
 
 def generator_for(name: str):
-    if name not in _GENERATORS:  # load Emuru once and keep it in memory
+    if name not in _GENERATORS:  # load the model once and keep it in memory
         _GENERATORS[name] = get_generator(name)
     return _GENERATORS[name]
 
@@ -32,12 +32,30 @@ def _paths(files):
     return [f if isinstance(f, str) else getattr(f, "name", f) for f in files]
 
 
-def preview_style(style_files, transcription, remove_ruling):
+def read_handwriting(style_files, remove_ruling, progress=gr.Progress()):
+    """Step 2: find the lines in the photo and let OCR read them. The user then corrects the text."""
+    paths = _paths(style_files)
+    if not paths:
+        raise gr.Error("Upload a photo of your handwriting first.")
+    progress(0.1, desc="Finding lines")
+    lines = detect_style_lines(paths, remove_ruling)
+    if not lines:
+        raise gr.Error("No handwriting found - try a clearer, closer photo.")
+    progress(0.4, desc="Reading your handwriting (first run downloads the OCR model)")
     try:
-        refs = prepare_style_refs(_paths(style_files), transcription or "", remove_lines=remove_ruling)
-        return [(r.image, r.text) for r in refs], f"OK - {len(refs)} style line(s) ready."
-    except Exception as e:  # show the reason in the UI instead of crashing
-        return [], f"Error: {e}"
+        from copywrite.ocr import transcribe_lines
+
+        results = transcribe_lines(lines)
+    except ImportError:
+        gallery = [(img, f"line {i + 1}") for i, img in enumerate(lines)]
+        return gallery, "", (f"Found **{len(lines)} line(s)**. OCR isn't installed here "
+                             "(pip install -r requirements-model.txt), so type what each line says below.")
+    gallery = [(img, f"{i + 1}. {r.text}   ({r.confidence:.0%})") for i, (img, r) in enumerate(zip(lines, results))]
+    unsure = [str(i + 1) for i, r in enumerate(results) if r.needs_check]
+    msg = f"Found and read **{len(lines)} line(s)**. Check the text below against your photo and fix any mistakes."
+    if unsure:
+        msg += f" The OCR is least sure about line(s) **{', '.join(unsure)}**."
+    return gallery, "\n".join(r.text for r in results), msg
 
 
 def run(text, text_file, style_files, transcription, remove_ruling, backend,
@@ -47,8 +65,13 @@ def run(text, text_file, style_files, transcription, remove_ruling, backend,
         text = read_text_file(_paths([text_file])[0])
     if not text or not text.strip():
         raise gr.Error("Type some text or upload a .txt/.docx file.")
+    lines = detect_style_lines(_paths(style_files), remove_ruling)
+    if not lines:
+        raise gr.Error("Upload a photo of your handwriting (step 2).")
+    if not transcription or not transcription.strip():
+        raise gr.Error("Click 'Read my handwriting' in step 2 and check the text first.")
     try:
-        refs = prepare_style_refs(_paths(style_files), transcription or "", remove_lines=remove_ruling)
+        refs = build_refs(lines, transcription)
     except ValueError as e:
         raise gr.Error(str(e))
     if background == "photo" and bg_photo is None:
@@ -63,15 +86,15 @@ def run(text, text_file, style_files, transcription, remove_ruling, backend,
     gen = generator_for(backend)
     result = generate_document(text, refs, gen, cfg, bg_photo,
                                progress=lambda p, m: progress(p, desc=m))
-    out_dir = tempfile.mkdtemp(prefix="hwgen_")
+    out_dir = tempfile.mkdtemp(prefix="copywrite_")
     files = save_pages(result["pages"], out_dir, cfg.dpi)
     return result["pages"], files["pdf"], json.dumps(result["stats"], indent=2)
 
 
 def build_ui(default_backend: str):
-    with gr.Blocks(title="Handwritten Notes Generator") as demo:
-        gr.Markdown("# ✍️ Handwritten Notes Generator\nType or upload notes, give a photo of a few "
-                    "lines of your handwriting, and get pages written in your style.")
+    with gr.Blocks(title="CopyWrite AI") as demo:
+        gr.Markdown("# ✍️ CopyWrite AI\nType or upload notes, add a photo of a few lines of your "
+                    "handwriting, and get pages written in your style.")
         with gr.Row():
             with gr.Column(scale=1):
                 with gr.Tab("1. Content"):
@@ -79,14 +102,15 @@ def build_ui(default_backend: str):
                                       placeholder="Paste your notes here. Each new line starts a new paragraph.")
                     text_file = gr.File(label="...or upload .txt / .docx", file_types=[".txt", ".md", ".docx"])
                 with gr.Tab("2. Your handwriting"):
-                    style_files = gr.File(label="Photo(s) of 1-5 lines of your handwriting",
+                    style_files = gr.File(label="Photo(s) of 2-5 lines of your handwriting",
                                           file_count="multiple", file_types=["image"])
-                    transcription = gr.Textbox(label="What those lines say (one line per handwritten line, in order)",
-                                               lines=4)
                     remove_ruling = gr.Checkbox(value=True, label="Remove notebook lines from the photo")
-                    preview_btn = gr.Button("Check style lines")
-                    style_gallery = gr.Gallery(label="Detected style lines", columns=1, height=240)
+                    read_btn = gr.Button("Read my handwriting", variant="secondary")
                     style_msg = gr.Markdown()
+                    style_gallery = gr.Gallery(label="Detected lines (OCR text, confidence)", columns=1, height=260)
+                    transcription = gr.Textbox(
+                        label="What those lines say - filled in by OCR, fix any mistakes (one line per handwritten line)",
+                        lines=5)
                 with gr.Tab("3. Page"):
                     background = gr.Radio(["ruled", "plain", "grid", "photo"], value="ruled", label="Background")
                     bg_photo = gr.Image(label="Page photo (for 'photo' background)", type="pil")
@@ -109,7 +133,7 @@ def build_ui(default_backend: str):
                 pdf = gr.File(label="Download PDF")
                 stats = gr.Code(label="Run stats", language="json")
 
-        preview_btn.click(preview_style, [style_files, transcription, remove_ruling], [style_gallery, style_msg])
+        read_btn.click(read_handwriting, [style_files, remove_ruling], [style_gallery, transcription, style_msg])
         go.click(run, [text, text_file, style_files, transcription, remove_ruling, backend, background, bg_photo,
                        page_size, line_spacing, text_scale, jitter, margin_left, ink_name, ink_custom,
                        watermark, seed], [pages, pdf, stats])
@@ -119,7 +143,7 @@ def build_ui(default_backend: str):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--share", action="store_true", help="public link (use this on Colab/Kaggle)")
-    ap.add_argument("--backend", default=os.environ.get("HWGEN_BACKEND", "emuru"), choices=["emuru", "font"])
+    ap.add_argument("--backend", default=os.environ.get("COPYWRITE_BACKEND", "emuru"), choices=["emuru", "font"])
     ap.add_argument("--port", type=int, default=7860)
     ap.add_argument("--host", default="127.0.0.1")
     args = ap.parse_args()
