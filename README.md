@@ -1,10 +1,11 @@
-# ✍️ CopyWrite AI
+# CopyWrite AI
 
-Give it your notes as text and a photo of a few lines of your handwriting. It writes the notes onto ruled, plain, grid or photographed pages **in your handwriting**, then exports PNG + PDF.
+Give it your notes as text and a photo of a few lines of your handwriting (or pick a sample handwriting). It writes the notes onto ruled, plain, grid or photographed pages **in that handwriting**, then exports PNG + PDF.
 
 - **AI model:** [Emuru](https://huggingface.co/blowing-up-groundhogs/emuru) (CVPR 2025), a VAE + T5 Transformer that imitates an unseen handwriting from a single line (zero-shot).
+- **Reliable generation:** each line is written in short pieces, every piece is read back by OCR and rewritten if words are missing or wrong, then the pieces are stitched together. No text goes missing.
 - **Sample handwritings:** 36 real writers from the [IAM database](https://huggingface.co/datasets/Teklia/IAM-line), so you can try it without photographing your own.
-- **Handwriting OCR:** [TrOCR](https://huggingface.co/microsoft/trocr-base-handwritten) reads your sample automatically; you only fix its mistakes.
+- **Handwriting OCR:** [TrOCR](https://huggingface.co/microsoft/trocr-base-handwritten) reads your sample automatically (you only fix its mistakes) and checks the generated text.
 - **Classical layout engine:** word wrap, ruled-line detection, baseline alignment, natural jitter, ink blending.
 - **Baseline for comparison:** a jittered handwriting font (no AI).
 - **Optional** invisible watermark.
@@ -38,16 +39,31 @@ python app.py                      # then open http://127.0.0.1:7860 in your bro
    - **Sample handwritings** tab: 36 real handwritings from the IAM database. Click one; the highlighted one is used. No photo or typing needed.
    - **My own handwriting** tab: upload a photo of 2-5 lines of your writing, click **Read my handwriting**, and fix any wrong words in the text box. The text must match your writing exactly.
 2. **What should it write?** Paste your notes (an example is already filled in) or upload a `.txt` / `.docx`. Each new line starts a new paragraph.
-3. **Page:** choose ruled / plain / grid paper (or a photo of a real page), the ink colour and the handwriting size. **More options** has page size, line spacing, margin, messiness, engine and seed.
-4. Click **Write my notes**. The pages appear on the right; **Download PDF** is below them.
+3. **Page:** choose ruled / plain / grid paper (or a photo of a real page), the ink colour, the handwriting size and the **Quality**:
+   - **Fast:** one attempt per piece, and only pieces that fail the check are rewritten.
+   - **Best:** three attempts per piece, and the one the OCR reads best is kept. Slower, but cleaner.
 
-Tips: if the writing is too big or small for the lines, change **Handwriting size**. Different samples write at different widths, so try a few. The first generation on Colab is slow (the model is loading), and later ones are much faster.
+   **More options** has page size, line spacing, margin, messiness, engine, seed and **Save debug images**.
+4. Click **Write my notes**. The pages appear on the right; **Download PDF** is below them. The message above the pages says how many pieces were rewritten and whether any never passed the check.
+
+Tips:
+- If the writing is too big or small for the lines, change **Handwriting size**.
+- Different samples write at different widths and some are easier for the model, so try a few.
+- The first generation on Colab is slow (the models are loading), and later ones are faster. A page takes roughly 1-3 minutes on a T4.
+
+**If the output looks wrong:** tick **More options → Save debug images**, generate again, and download the zip. It contains:
+- the style line used
+- every piece and every attempt, marked `ok` or `bad`
+- each stitched line and the final pages
+- `pieces.csv`: what the OCR read, the error rate and the width check for every piece
+
+Send the zip along with the **Run details** text.
 
 ### Command line
 ```bash
 python -m copywrite.cli --text samples/text/sample_notes.txt \
   --style samples/style/me.jpg \
-  --backend emuru --background ruled --ink blue --out outputs/run1
+  --backend emuru --background ruled --ink blue --quality best --debug-dir outputs/run1/debug --out outputs/run1
 ```
 Without `--style-text`, OCR reads your sample and prints what it read. Save a corrected copy and pass it with `--style-text me.txt` if needed. Add `--watermark` for the optional watermark (needs `pip install invisible-watermark`).
 
@@ -68,9 +84,11 @@ This writes per-line OCR CER (TrOCR), KID/FID vs. your real lines, seconds per l
 app.py                      Gradio web UI
 copywrite/
   preprocess.py             photo -> clean 64px style lines
-  ocr.py                    TrOCR auto-transcription of your sample (+ confidence)
+  ocr.py                    TrOCR: reads your sample (+ confidence) and checks generated text
   library.py                sample handwritings (IAM lines, downloaded + cached on first use)
-  backends.py               EmuruGenerator (AI) / FontGenerator (baseline)
+  backends.py               EmuruGenerator (AI) / FontGenerator (baseline): one model call
+  writer.py                 LineWriter: pieces -> batched generation -> OCR check -> retries -> stitch
+  metrics.py                CER / letter-level CER
   background.py             page templates, ruled-line + margin detection
   layout.py                 wrapping, placement, jitter, ink compositing
   pipeline.py               end-to-end orchestration

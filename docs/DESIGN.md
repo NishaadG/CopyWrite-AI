@@ -77,10 +77,15 @@ flowchart LR
     REF --> P[Pipeline]
     B[Background: ruled / plain / grid<br/>or photo of a page] --> BG[Background module<br/>ruled-line detection · margin detection]
     BG --> P
-    P --> CAL[Calibrate: write one sentence,<br/>measure px per char]
+    P --> CAL[Width model: px per char<br/>measured on the style line]
     CAL --> WRAP[Word wrap to page width]
-    WRAP --> GEN[Line generator<br/>Emuru AI or Font baseline<br/>batched on GPU]
-    GEN --> LAY[Layout engine<br/>scale · baseline align · jitter]
+    WRAP --> SPLIT[Split lines into pieces<br/>of a few words]
+    SPLIT --> GEN[Emuru, batched on GPU]
+    GEN --> CHK{Check each piece<br/>width + TrOCR read-back}
+    CHK -- fail --> RETRY[Retry: new seed,<br/>then split into words]
+    RETRY --> GEN
+    CHK -- pass --> STITCH[Stitch pieces with the<br/>handwriting's word spacing]
+    STITCH --> LAY[Layout engine<br/>scale · baseline align · jitter]
     LAY --> COMP[Ink compositing<br/>multiply blend, ink colour]
     COMP --> WM{Watermark?<br/>optional}
     WM --> OUT[PNG pages + PDF]
@@ -92,15 +97,52 @@ flowchart LR
 |---|---|
 | `copywrite/preprocess.py` | Phone photo → clean style lines: illumination flattening, notebook-line removal, projection-profile line split, neighbour-stroke removal, crop, 64 px resize, contrast normalisation, safe shortening of long lines |
 | `copywrite/library.py` | Sample handwritings: downloads one IAM split from Hugging Face (`Teklia/IAM-line`, ~24 MB, once), picks 36 clean lines spread across writers, and caches them as style references |
-| `copywrite/ocr.py` | TrOCR handwriting OCR: reads the style lines with a confidence score (auto-transcription); reused for the legibility metric |
-| `copywrite/backends.py` | `EmuruGenerator` (AI), `FontGenerator` (baseline). Same interface: `generate(text, style) → line image` |
+| `copywrite/ocr.py` | TrOCR handwriting OCR: reads the style lines with a confidence score (auto-transcription); checks every generated piece; reused for the legibility metric |
+| `copywrite/backends.py` | `EmuruGenerator` (AI), `FontGenerator` (baseline). Same interface: `generate_many(texts, style) → images`, one raw model call. Emuru: relaxed stopping rule, out-of-memory recovery (halve the batch), per-item fallback, errors recorded |
+| `copywrite/writer.py` | `LineWriter`: the reliability layer. Pieces → batched generation → verification → retries → stitching (Section 4.1) |
+| `copywrite/metrics.py` | CER and letter-level CER (shared by the verifier and the evaluation) |
 | `copywrite/background.py` | Page templates; ruled-line and margin detection on photos (morphology + peak finding); line slots |
 | `copywrite/layout.py` | Word wrap, baseline estimation, scaling/overflow handling, jitter, multiply-blend compositing |
-| `copywrite/pipeline.py` | Orchestration: calibrate → wrap → batched generation → pages; returns timing stats |
+| `copywrite/pipeline.py` | Orchestration: background → width model → wrap → LineWriter → pages; returns stats (pieces, rewritten, unverified, timing); optional debug folder |
 | `copywrite/watermark.py` | Optional invisible DWT-DCT watermark (embed + detect) |
 | `copywrite/cli.py`, `app.py` | Command line and Gradio UI. The UI has three steps (choose handwriting → text → page) plus one button, with advanced settings folded away; it picks the engine from GPU availability and preloads the model and library in the background. Works on Gradio 5 and 6. |
 | `scripts/evaluate.py` | CER (TrOCR), KID/FID, speed, comparison sheet |
 | `notebooks/run_on_colab.ipynb` | One-click GPU run |
+
+### 4.1 Reliable generation (LineWriter)
+
+**The problem (first GPU run).** Whole lines were sent to Emuru in one call, and about half the text never appeared. The causes were in how the model decides to stop:
+- Emuru writes one 8-px latent column at a time and stops when `stopping_after` (default **10**) columns in a row look like blank paper, i.e. ~80 px of white. At 64 px line height, a wide word gap is about that size, so with loosely spaced handwriting it **stopped mid-line**.
+- Each call held ~40 characters of style text plus a ~60-character line. The longer the text, the more likely an early stop or a run-on.
+- Nothing checked the result, so a truncated line went straight onto the page.
+- The width calibration was itself a generated sentence, so if that got truncated, the wrap width was wrong too.
+
+**The design.** Never trust a single model call with a whole line:
+
+| Stage | What | Why |
+|---|---|---|
+| Width model | px per character measured on the style line itself | Emuru writes about as wide as the style; no model call that could fail |
+| Split | Each line → pieces of whole words, ≤ 28 characters (~4-5 words) | Short text is far more reliable, and similar-length pieces batch well |
+| Generate | All pieces batched per style line; `stopping_after = 16` (~128 px of white) | A word gap no longer ends the line; batches make it fast on a T4 |
+| Verify | (a) **Width:** ink width / (characters × px-per-char) must be 0.55-1.9. (b) **TrOCR read-back:** letter-level CER ≤ 0.4. (c) **Run-on:** no more than ~15% extra letters | Catches truncation (too narrow, letters missing), blank output, scribbling past the end, and wrong words |
+| Retry | Failed pieces get 2 new attempts with new seeds per round; in the last round a stubborn multi-word piece is split into halves. The best-scoring attempt is always kept | Emuru samples its style latents, so a new seed gives a genuinely different attempt |
+| Best-of-N | "Best" quality: 3 attempts per piece on the first pass, keep the one OCR reads best | Higher fidelity when time allows |
+| Stitch | Pieces joined side by side, gap = the style's median word gap; baseline from the line (or the style line for short text) | Emuru continues the style image, so every piece shares the style's baseline and spacing |
+| Fallback | If the model wrote nothing even after retries, the piece is drawn with a plain font at the handwriting's width, and this is reported | **No text is ever silently dropped** |
+
+Other robustness details:
+- **Typography:** Word/.docx characters (curly quotes, en/em dashes, ellipsis, bullets) are converted to plain ones. The model reads raw UTF-8 bytes (ByT5 tokenizer), and a curly quote is 3 bytes it never saw.
+- **GPU memory:** out-of-memory halves the batch. Any other model error falls back to one-by-one generation, so one bad item can't lose a batch. The error is kept and shown to the user.
+- **Reporting:** every run reports pieces, rewritten, split, unverified and font fallbacks.
+- **Debug mode:** the UI checkbox or `--debug-dir` saves the style line, every attempt (marked ok/bad), each stitched line, the pages, and `pieces.csv` (OCR read, CER, width ratio per piece).
+
+This was tested locally with a simulated unreliable generator that truncates 30-45% of pieces, returns nothing for 10% and runs on for 10%:
+- **Fast:** 1-3 of ~25 pieces stayed unverified.
+- **Best:** 0-2 stayed unverified.
+- **Model that returns nothing:** the page is still complete, via the font fallback.
+- **Perfect generator:** 0 retries.
+
+The OCR check only runs with the AI engine and needs TrOCR (~1.3 GB, loaded next to Emuru on the T4). Evaluation (`scripts/evaluate.py`) uses the same LineWriter **without** the OCR check, because TrOCR is also the legibility metric and letting it choose the outputs would inflate the score.
 
 ## 5. Inputs and outputs
 
@@ -108,9 +150,9 @@ flowchart LR
 - **Content:** typed text, or a `.txt` / `.md` / `.docx` upload. Each line break starts a new paragraph (indented).
 - **Style:** either **one click on a sample handwriting** from the built-in library, or 1-5 photos of the user's *normal* writing (2-5 lines of 4-8 words is ideal). For photos, **OCR reads the lines automatically**; the user only corrects mistakes (lines under 80% confidence are flagged).
 - **Page:** background (ruled / plain / grid / uploaded photo), page size, line spacing, text size, left margin, "messiness", ink colour, seed.
-- **Options:** watermark on/off, backend (emuru / font).
+- **Options:** quality (fast / best), watermark on/off, backend (emuru / font), save debug images.
 
-**Outputs:** one PNG per page (150 DPI) + a multi-page PDF + run stats (lines, pages, seconds per line).
+**Outputs:** one PNG per page (150 DPI), a multi-page PDF, and run stats (lines, pages, pieces rewritten / unverified, seconds per line). With debug on, a zip of every intermediate image and a per-piece report.
 
 ## 6. How each MVP requirement is met
 
@@ -163,7 +205,8 @@ Expected story: Emuru is much closer to the real writer (KID, visual comparison)
 | OCR misreads the style sample | Low-confidence lines are flagged; user corrects before generating. A wrong transcription would teach the model the wrong letter shapes, so correction matters |
 | Transcription doesn't match the lines | Hard error with a clear message (count mismatch) |
 | Long style lines are slow (the model has no KV-cache) | References are auto-shortened at a word gap to ≤ 768 px |
-| Model doesn't stop, or makes an over-long line | `max_new_tokens` capped from estimated width; overflow squeeze/shrink |
+| Model stops early (missing text), doesn't stop (scribbles), or misspells | LineWriter (Section 4.1): short pieces, relaxed stopping rule, width + OCR check of every piece, retries, split, font fallback; `max_new_tokens` capped from the expected width; overflow squeeze/shrink |
+| GPU runs out of memory | Batch is halved automatically; smaller pieces keep sequences short |
 | Digits, symbols and rare letters look off | Put a few digits in the style sample; report it as a limitation |
 
 ## 10. Future scope (post-MVP)
