@@ -6,13 +6,15 @@ is wrong, the model links the wrong letters to the wrong shapes and the output s
 degrades. So OCR pre-fills the text, flags lines it is unsure about, and the user fixes
 the few mistakes. Typically that is a couple of words, not the whole sample.
 
-The same model is reused in evaluation to measure legibility (character error rate).
+The same model checks every piece the generator writes (writer.py: does it say what it
+should?) and is reused in evaluation to measure legibility (character error rate).
 
 Model: microsoft/trocr-base-handwritten - a Vision Transformer encoder + text Transformer
 decoder (encoder-decoder, like the syllabus' Module 3), fine-tuned on IAM handwriting.
 ~330 M params: fine on Colab, ~1-2 s/line on a laptop CPU.
 """
 
+import threading
 from dataclasses import dataclass
 from typing import List, Optional
 
@@ -75,11 +77,13 @@ class HandwritingOCR:
 
 
 _OCR = {}
+_OCR_LOCK = threading.Lock()
 
 
 def get_ocr(model_id: str = DEFAULT_MODEL) -> HandwritingOCR:
-    if model_id not in _OCR:  # load once, reuse
-        _OCR[model_id] = HandwritingOCR(model_id)
+    with _OCR_LOCK:  # the app preloads it in a background thread
+        if model_id not in _OCR:  # load once, reuse
+            _OCR[model_id] = HandwritingOCR(model_id)
     return _OCR[model_id]
 
 

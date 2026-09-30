@@ -13,6 +13,8 @@ Metrics:
   - KID / FID (torchmetrics) between generated and real line images -> realism.
     With few lines, report KID (FID is unreliable below a few hundred images).
   - seconds per line -> speed / feasibility.
+  Generated lines go through the same LineWriter as the app (pieces, width check, retries),
+  but without the OCR read-back check, since TrOCR is also the legibility metric.
   - a side-by-side sheet (real vs AI vs font) to use in the report and slides.
 
 Usage:
@@ -37,21 +39,9 @@ from copywrite.backends import get_generator  # noqa: E402
 from copywrite.io_utils import read_text_file  # noqa: E402
 from copywrite.layout import trim_width  # noqa: E402
 from copywrite.preprocess import prepare_style_refs  # noqa: E402
+from copywrite.metrics import cer  # noqa: E402
 from copywrite.ocr import get_ocr  # noqa: E402
-
-
-def levenshtein(a: str, b: str) -> int:
-    prev = list(range(len(b) + 1))
-    for i, ca in enumerate(a, 1):
-        cur = [i]
-        for j, cb in enumerate(b, 1):
-            cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ca != cb)))
-        prev = cur
-    return prev[-1]
-
-
-def cer(pred: str, truth: str) -> float:
-    return levenshtein(pred.strip(), truth.strip()) / max(1, len(truth.strip()))
+from copywrite.writer import LineWriter  # noqa: E402
 
 
 def to_fixed(img: Image.Image, w=512, h=64) -> np.ndarray:
@@ -139,9 +129,10 @@ def main():
             if hasattr(gen, "load"):
                 gen.load()
             t0 = time.time()
-            imgs = []
-            for i, t in enumerate(test):
-                imgs.append(gen.generate(t.text, refs[i % len(refs)], seed=i))
+            # the full system (pieces + width check + retries), but WITHOUT the OCR check:
+            # TrOCR is also the metric, so letting it pick outputs would inflate the CER result
+            written = LineWriter(gen, refs, seed=0).write([t.text for t in test])
+            imgs = [written[i].image for i in range(len(test))]
             secs = (time.time() - t0) / len(test)
             gen_imgs[bname] = imgs
         cers = []

@@ -36,6 +36,10 @@ def main():
     ap.add_argument("--watermark", action="store_true", help="embed an invisible watermark (optional)")
     ap.add_argument("--batch-size", type=int, default=8)
     ap.add_argument("--keep-ruling", action="store_true", help="don't remove notebook lines from style photo")
+    ap.add_argument("--quality", default="fast", choices=["fast", "best"],
+                    help="best = several attempts per piece, keep the one the OCR reads best (slower)")
+    ap.add_argument("--no-check", action="store_true", help="skip the OCR read-back check of generated text")
+    ap.add_argument("--debug-dir", default=None, help="save every intermediate image + a per-piece report here")
     ap.add_argument("--out", default="outputs/run")
     args = ap.parse_args()
 
@@ -61,7 +65,13 @@ def main():
     def progress(p, msg):
         print(f"[{p * 100:5.1f}%] {msg}", flush=True)
 
-    result = generate_document(read_text_file(args.text), refs, get_generator(args.backend), cfg, photo, progress)
+    ocr = None
+    if args.backend == "emuru" and not args.no_check:
+        from .ocr import get_ocr
+
+        ocr = get_ocr()
+    result = generate_document(read_text_file(args.text), refs, get_generator(args.backend), cfg, photo, progress,
+                               ocr=ocr, quality=args.quality, debug_dir=args.debug_dir)
     files = save_pages(result["pages"], args.out, cfg.dpi)
     for i, r in enumerate(refs):
         r.image.save(f"{args.out}/style_ref_{i}.png")

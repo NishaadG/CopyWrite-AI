@@ -11,11 +11,20 @@ from .config import LineSlot, PageConfig
 
 WORD_SEP = " "
 
+# Word/.docx typography -> plain characters the handwriting model has seen (it reads raw bytes,
+# so a curly quote is 3 unknown bytes to it)
+_PLAIN = {"‘": "'", "’": "'", "“": '"', "”": '"', "–": "-", "—": "-",
+          "…": "...", "•": "-", " ": " ", "\t": " ", "×": "x"}
+
+
+def normalize_text(text: str) -> str:
+    return "".join(_PLAIN.get(ch, ch) for ch in text)
+
 
 def paragraphs(text: str) -> List[List[str]]:
     """Each non-empty input line is treated as a paragraph (keeps the user's own line breaks)."""
     out = []
-    for raw in text.replace("\r\n", "\n").split("\n"):
+    for raw in normalize_text(text).replace("\r\n", "\n").split("\n"):
         words = raw.split()
         out.append(words)  # empty list = blank line, preserved
     while out and not out[-1]:
@@ -75,12 +84,16 @@ def place_line(
     cfg: PageConfig,
     rng: random.Random,
     indent_px: int = 0,
+    baseline: Optional[int] = None,
 ) -> float:
     """Scale, jitter and write one line into the page's ink-alpha buffer (max-combine).
 
-    Returns the px/char-independent horizontal scale actually used (for diagnostics).
+    `baseline` is the row of the writing baseline in `line` (estimated if not given).
+    Returns the horizontal squeeze factor used to fit the line (1.0 = none; for diagnostics).
     """
     j = cfg.jitter
+    if baseline is None:
+        baseline = estimate_baseline(line)
     line = trim_width(line)
     line_h_px = cfg.mm(cfg.line_spacing_mm) * cfg.text_scale
     scale = line_h_px / line.height * (1 + rng.gauss(0, 0.015 * j))
@@ -106,7 +119,7 @@ def place_line(
     ink = 1.0 - np.asarray(img, dtype=np.float32) / 255.0
     ink = np.clip((ink - 0.08) / 0.92, 0, 1)  # drop faint model haze
 
-    base = int(estimate_baseline(line) * scale) + (img.height - new_h) // 2
+    base = int(baseline * new_h / line.height) + (img.height - new_h) // 2
     x = slot.x_start + indent_px + int(abs(rng.gauss(0, 3.0 * j)))
     y = slot.baseline_y - base - 2 + int(round(rng.gauss(0, 1.2 * j)))
 
