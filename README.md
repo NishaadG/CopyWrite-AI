@@ -16,19 +16,27 @@ Full design: [`docs/DESIGN.md`](docs/DESIGN.md)
 
 ### Option A: Google Colab (free GPU, real AI handwriting). Use this for results and the demo.
 
-1. Click this link: **[Open the notebook in Colab](https://colab.research.google.com/github/NishaadG/CopyWrite-AI/blob/main/notebooks/run_on_colab.ipynb)**. Sign in with a Google account if asked.
-2. In Colab: **Runtime → Change runtime type → T4 GPU → Save**.
+1. Open **[the notebook in Colab](https://colab.research.google.com/github/NishaadG/CopyWrite-AI/blob/main/notebooks/run_on_colab.ipynb)**. Sign in with a Google account if asked.
+2. **Runtime → Change runtime type → T4 GPU → Save**.
 3. **Runtime → Run all** (`Ctrl+F9`). If Colab warns "This notebook was not authored by Google", click **Run anyway**.
-4. Wait 3-5 minutes. Step 4 of the notebook prints two links:
-   - **Link 1** goes through Colab and is the most reliable. It works in the same browser where Colab is open.
-   - **Link 2** (`gradio.live`) is public and works on any device, but its relay sometimes gives **504 Gateway Time-out**. If that happens, use Link 1.
+4. After 3-5 minutes, step 4 prints:
+   ```
+   CopyWrite AI is ready. Open:
+     Public link (any device)         https://something-random.trycloudflare.com
+     Colab link (this browser only)   https://...colab.googleusercontent.com/...
+   ```
+   Click the **public link**. It also works on your phone. Leave the Colab tab open; the app runs inside it.
+5. If something fails, run step 5 (`python serve.py --status`) and copy its output. It shows the app's log and any error.
 
-   If either link fails, run the next cell (the log) and copy its output.
-5. Use the app (below). Leave the Colab tab open; closing it stops the app after a while.
+**After you change the code:** `git push`, then in Colab re-run steps 2 and 4.
 
-**After you change the code:** `git push` from your laptop, then in Colab do **Runtime → Restart session and run all**. The notebook pulls the latest code automatically.
+### Option B: Kaggle (when Colab says it can't connect to a GPU)
+Colab's free GPU has a daily limit. Kaggle gives 30 free GPU hours per week:
+1. On kaggle.com: **Create → New Notebook → File → Import Notebook**, and import `notebooks/run_on_colab.ipynb` from this repo. Paste its GitHub URL, or download and upload the file.
+2. In the right panel, **Session options**: set **Accelerator: GPU T4 x2** and **Internet: on**. Kaggle asks for phone verification once.
+3. **Run all**, then click the public link printed by step 4.
 
-### Option B: your laptop (no GPU needed; shows a simple font instead of the AI model)
+### Option C: your laptop (no GPU; shows a plain font instead of the AI model)
 Good for trying the interface and working on the layout. The AI model is switched off automatically when there is no GPU.
 ```bash
 python -m venv .venv
@@ -36,6 +44,19 @@ python -m venv .venv
 pip install -r requirements.txt
 python app.py                      # then open http://127.0.0.1:7860 in your browser
 ```
+`python serve.py` does the same, but also gives you a public link to share.
+
+### Why the link is a Cloudflare tunnel, not gradio.live
+Gradio's own share link goes through a relay that often answers **504 Gateway Time-out** even when the app is running fine. `serve.py`:
+1. starts the app in the background
+2. checks that it really answers, and prints the error if it crashed
+3. opens a free [Cloudflare quick tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/do-more-with-tunnels/trycloudflare/) (no account needed)
+4. prints the link only once it actually loads
+
+Other commands:
+- `python serve.py --status` shows the logs.
+- `python serve.py --stop` stops the app.
+- `python serve.py --gradio-share` also tries gradio.live.
 
 ## Using the app
 
@@ -86,6 +107,7 @@ This writes per-line OCR CER (TrOCR), KID/FID vs. your real lines, seconds per l
 ## Project structure
 ```
 app.py                      Gradio web UI
+serve.py                    launcher: starts the app, checks it, opens a Cloudflare public link
 copywrite/
   preprocess.py             photo -> clean 64px style lines
   ocr.py                    TrOCR: reads your sample (+ confidence) and checks generated text

@@ -49,18 +49,20 @@ Note: generation is **not deterministic**. The style image is encoded by *sampli
 
 ```
 ┌──────────── Your laptop ────────────┐          ┌──────── Google Colab / Kaggle (free T4 GPU) ───────┐
-│ VS Code: write & test code           │  git     │ notebook: clone repo → pip install → app.py --share │
+│ VS Code: write & test code           │  git     │ notebook: clone repo → pip install → serve.py       │
 │ python app.py --backend font         │ ───────► │  Emuru model on GPU (~3 GB VRAM)                    │
 │   (whole UI + layout, no AI, instant)│  push    │  Gradio app + layout engine                          │
-│ Browser ─────────────────────────────┼─────────►│  public https://xxxx.gradio.live link                │
+│ Browser ─────────────────────────────┼─────────►│  public https://xxxx.trycloudflare.com link          │
 └──────────────────────────────────────┘  link    └──────────────────────────────────────────────────────┘
 ```
 
 | Mode | Where | Use it for |
 |---|---|---|
 | **Font backend, local** | Laptop | Building/debugging the UI, layout, backgrounds, PDF. Needs no torch. `python app.py` picks it automatically when there is no GPU. |
-| **Emuru on Colab/Kaggle** | Cloud GPU | Real results, demo, evaluation. Open the share link from the laptop or from a phone during the viva. |
+| **Emuru on Colab/Kaggle** | Cloud GPU | Real results, demo, evaluation. Open the public link from the laptop or from a phone during the viva. Kaggle (30 GPU h/week) when Colab's daily GPU quota is used up. |
 | **Emuru on CPU** | Laptop, if it has ≥ 8 GB free RAM | Possible but slow (minutes per page). Only as a last resort. |
+
+**Hosting the link.** `serve.py` starts `app.py` in the background, waits until it really answers on localhost (and prints the crash log if it doesn't), then opens a free **Cloudflare quick tunnel** (`*.trycloudflare.com`, no account) and prints the link only once it loads. On Colab it also prints a Colab-proxied backup link. We moved away from Gradio's own `gradio.live` share link because its relay returned **504 Gateway Time-out** in our runs, and the old notebook cell gave no way to tell a dead app from a dead relay. The launcher lives in the repo rather than in the notebook, so a `git pull` updates it. Tested end to end through the tunnel (sample list, generation, PDF download).
 
 Demo-day tip: start the Colab session ~10 min before, keep a **pre-generated PDF + screenshots** as a fallback in case the link or Wi-Fi fails.
 
@@ -105,6 +107,7 @@ flowchart LR
 | `copywrite/layout.py` | Word wrap, baseline estimation, scaling/overflow handling, jitter, multiply-blend compositing |
 | `copywrite/pipeline.py` | Orchestration: background → width model → wrap → LineWriter → pages; returns stats (pieces, rewritten, unverified, timing); optional debug folder |
 | `copywrite/watermark.py` | Optional invisible DWT-DCT watermark (embed + detect) |
+| `serve.py` | Launcher: background app + health check + Cloudflare public link + status/stop |
 | `copywrite/cli.py`, `app.py` | Command line and Gradio UI. The UI has three steps (choose handwriting → text → page) plus one button, with advanced settings folded away; it picks the engine from GPU availability and preloads the model and library in the background. Works on Gradio 5 and 6. |
 | `scripts/evaluate.py` | CER (TrOCR), KID/FID, speed, comparison sheet |
 | `notebooks/run_on_colab.ipynb` | One-click GPU run |
@@ -198,7 +201,8 @@ Expected story: Emuru is much closer to the real writer (KID, visual comparison)
 
 | Risk | Mitigation |
 |---|---|
-| Colab disconnects / GPU quota | Kaggle as backup (30 GPU h/week); keep pre-generated outputs for the demo |
+| Colab disconnects / GPU quota | Kaggle as backup (30 GPU h/week, same notebook); keep pre-generated outputs for the demo |
+| Public link fails (gradio.live 504) | `serve.py`: Cloudflare quick tunnel, health-checked before the link is printed; Colab-proxied backup link; `serve.py --status` shows the app log |
 | Transformers/diffusers version breaks the model's remote code | Versions pinned in `requirements-model.txt`; if it breaks, pin to the version Colab shows working and note it |
 | Bad style photo, giving garbage style | UI preview of detected lines; tips in `samples/style/README.md`; or skip the photo and pick a **sample handwriting** |
 | Library transcriptions don't match the image | IAM text is tokenised (`chosen ,`); `library.clean_text` rejoins punctuation, and lines with quotes, spelled-out initials (`B B C`) or odd symbols are skipped |
