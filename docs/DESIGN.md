@@ -104,13 +104,23 @@ flowchart LR
 | `copywrite/writer.py` | `LineWriter`: the reliability layer. Pieces → batched generation → verification → retries → stitching (Section 4.1) |
 | `copywrite/metrics.py` | CER and letter-level CER (shared by the verifier and the evaluation) |
 | `copywrite/background.py` | Page templates; ruled-line and margin detection on photos (morphology + peak finding); line slots |
-| `copywrite/layout.py` | Word wrap, baseline estimation, scaling/overflow handling, jitter, multiply-blend compositing |
+| `copywrite/layout.py` | Word wrap, baseline estimation, ink normalisation + pen thickness, scaling/overflow handling, jitter, multiply-blend compositing |
 | `copywrite/pipeline.py` | Orchestration: background → width model → wrap → LineWriter → pages; returns stats (pieces, rewritten, unverified, timing); optional debug folder |
 | `copywrite/watermark.py` | Optional invisible DWT-DCT watermark (embed + detect) |
 | `serve.py` | Launcher: background app + health check + Cloudflare public link + status/stop |
 | `copywrite/cli.py`, `app.py` | Command line and Gradio UI. The UI has three steps (choose handwriting → text → page) plus one button, with advanced settings folded away; it picks the engine from GPU availability and preloads the model and library in the background. Works on Gradio 5 and 6. |
 | `scripts/evaluate.py` | CER (TrOCR), KID/FID, speed, comparison sheet |
 | `notebooks/run_on_colab.ipynb` | One-click GPU run |
+
+### 4.0 Ink rendering (why the first pages looked faded)
+
+Emuru's VAE decoder draws strokes in **dark grey, not black**, with a faint haze around them. The old layout pasted that grey as-is, then shrank the thin strokes with Lanczos resampling, then cut off the faintest 8%, so the pages looked washed out. Now each line goes through `layout.ink_alpha` at the model's own resolution, before any resizing:
+1. **Per-line contrast stretch:** the paper/haze level maps to 0 and the strong strokes (90th percentile of stroke pixels) map to full ink. Grey strokes become solid, and lines that are already black barely change.
+2. **Pen thickness** (0-2): each unit is one 3×3 dilation at 64 px height, blended for fractions. 0 = as generated, 1 = ballpoint, 2 = gel pen.
+3. **Soft edges:** a gamma of 0.8 gives solid stroke cores with anti-aliased edges.
+4. **Resizing:** the ink map (not the grey image) is resized with area averaging, which keeps thin strokes' coverage, and rotated with an expanding warp.
+
+Pages are now rendered at **200 DPI** (was 150) for crisper strokes, and the ink opacity went from 0.92 to 0.97. This was tested by feeding real handwriting faded to grey (~55% strength) plus haze through the old and new code: the old pages were pale and the new ones show solid pen strokes.
 
 ### 4.1 Reliable generation (LineWriter)
 
@@ -152,10 +162,10 @@ The OCR check only runs with the AI engine and needs TrOCR (~1.3 GB, loaded next
 **Inputs**
 - **Content:** typed text, or a `.txt` / `.md` / `.docx` upload. Each line break starts a new paragraph (indented).
 - **Style:** either **one click on a sample handwriting** from the built-in library, or 1-5 photos of the user's *normal* writing (2-5 lines of 4-8 words is ideal). For photos, **OCR reads the lines automatically**; the user only corrects mistakes (lines under 80% confidence are flagged).
-- **Page:** background (ruled / plain / grid / uploaded photo), page size, line spacing, text size, left margin, "messiness", ink colour, seed.
+- **Page:** background (ruled / plain / grid / uploaded photo), page size, line spacing, text size, left margin, "messiness", ink colour, pen thickness, seed.
 - **Options:** quality (fast / best), watermark on/off, backend (emuru / font), save debug images.
 
-**Outputs:** one PNG per page (150 DPI), a multi-page PDF, and run stats (lines, pages, pieces rewritten / unverified, seconds per line). With debug on, a zip of every intermediate image and a per-piece report.
+**Outputs:** one PNG per page (200 DPI), a multi-page PDF, and run stats (lines, pages, pieces rewritten / unverified, seconds per line). With debug on, a zip of every intermediate image and a per-piece report.
 
 ## 6. How each MVP requirement is met
 

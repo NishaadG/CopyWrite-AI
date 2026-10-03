@@ -170,7 +170,7 @@ def style_refs(source, lib_idx, style_files, transcription, remove_ruling):
 # ---------------------------------------------------------------- generate ---------------
 def run(source, lib_idx, text, text_file, style_files, transcription, remove_ruling, backend, quality,
         background, bg_photo, page_size, line_spacing, text_scale, jitter, margin_left,
-        ink_name, ink_custom, watermark, seed, debug, progress=gr.Progress()):
+        ink_name, ink_custom, pen, watermark, seed, debug, progress=gr.Progress()):
     if text_file:
         text = read_text_file(_paths([text_file])[0])
     if not text or not text.strip():
@@ -182,7 +182,8 @@ def run(source, lib_idx, text, text_file, style_files, transcription, remove_rul
     ink = hex_to_rgb(ink_custom) if ink_name == "custom" else INK_COLORS[ink_name]
     cfg = PageConfig(page_size=page_size, background=background, line_spacing_mm=line_spacing,
                      text_scale=text_scale, jitter=jitter, margin_left_mm=margin_left,
-                     ink_color=ink, watermark=watermark, seed=int(seed) if seed is not None else None)
+                     ink_color=ink, pen_weight=float(pen), watermark=watermark,
+                     seed=int(seed) if seed is not None else None)
 
     ocr = None
     if backend == "emuru":
@@ -276,10 +277,12 @@ def build_ui(default_backend: str):
                     text_file = gr.File(show_label=False, file_types=[".txt", ".md", ".docx"])
 
                 gr.Markdown("### 3. Page", elem_classes="step")
+                background = gr.Radio([("Ruled", "ruled"), ("Plain", "plain"), ("Grid", "grid"),
+                                       ("My page photo", "photo")], value="ruled", label="Paper")
                 with gr.Row():
-                    background = gr.Radio([("Ruled", "ruled"), ("Plain", "plain"), ("Grid", "grid"),
-                                           ("My page photo", "photo")], value="ruled", label="Paper")
                     ink_name = gr.Dropdown(list(INK_COLORS) + ["custom"], value="blue", label="Ink colour")
+                    pen = gr.Slider(0, 2, value=0.5, step=0.25, label="Pen thickness",
+                                    info="0 = fine pen, 1 = ballpoint, 2 = gel pen")
                 ink_custom = gr.ColorPicker(value="#1a2d8c", label="Custom ink colour", visible=False)
                 bg_photo = gr.Image(label="Photo of a blank page", type="pil", visible=False)
                 with gr.Row():
@@ -326,7 +329,7 @@ def build_ui(default_backend: str):
                        [style_gallery, transcription, style_msg, source])
         go.click(run, [source, lib_idx, text, text_file, style_files, transcription, remove_ruling, backend,
                        quality, background, bg_photo, page_size, line_spacing, text_scale, jitter, margin_left,
-                       ink_name, ink_custom, watermark, seed, debug], [pages, pdf, debug_zip, stats, status])
+                       ink_name, ink_custom, pen, watermark, seed, debug], [pages, pdf, debug_zip, stats, status])
     return demo
 
 

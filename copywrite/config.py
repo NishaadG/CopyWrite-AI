@@ -28,7 +28,7 @@ def hex_to_rgb(value: str) -> Tuple[int, int, int]:
 class PageConfig:
     # Page geometry
     page_size: str = "A4"
-    dpi: int = 150                      # 150 is plenty for screen/print and keeps things fast
+    dpi: int = 200                      # crisp strokes on screen and in print, still fast
     margin_left_mm: float = 25.0
     margin_right_mm: float = 12.0
     margin_top_mm: float = 25.0
@@ -44,7 +44,8 @@ class PageConfig:
     # Ink / text appearance
     ink_color: Tuple[int, int, int] = INK_COLORS["blue"]
     text_scale: float = 1.15            # rendered line-image height = line_spacing * text_scale
-    ink_opacity: float = 0.92
+    ink_opacity: float = 0.97
+    pen_weight: float = 0.5             # 0 = thin strokes as generated, 1 = bold pen, 2 = gel pen
 
     # Natural variance (0 = perfectly straight, 1 = default, 2 = messy)
     jitter: float = 1.0

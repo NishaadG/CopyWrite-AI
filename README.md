@@ -64,7 +64,7 @@ Other commands:
    - **Sample handwritings** tab: 36 real handwritings from the IAM database. Click one; the highlighted one is used. No photo or typing needed.
    - **My own handwriting** tab: upload a photo of 2-5 lines of your writing, click **Read my handwriting**, and fix any wrong words in the text box. The text must match your writing exactly.
 2. **What should it write?** Paste your notes (an example is already filled in) or upload a `.txt` / `.docx`. Each new line starts a new paragraph.
-3. **Page:** choose ruled / plain / grid paper (or a photo of a real page), the ink colour, the handwriting size and the **Quality**:
+3. **Page:** choose ruled / plain / grid paper (or a photo of a real page), the ink colour, the **Pen thickness** (0 = fine pen, 1 = ballpoint, 2 = gel pen), the handwriting size and the **Quality**:
    - **Fast:** one attempt per piece, and only pieces that fail the check are rewritten.
    - **Best:** three attempts per piece, and the one the OCR reads best is kept. Slower, but cleaner.
 

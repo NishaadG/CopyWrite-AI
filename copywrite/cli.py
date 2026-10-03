@@ -31,6 +31,7 @@ def main():
     ap.add_argument("--ink", default="blue", help=f"{list(INK_COLORS)} or hex like #1a2b8c")
     ap.add_argument("--line-spacing-mm", type=float, default=8.0)
     ap.add_argument("--text-scale", type=float, default=1.15)
+    ap.add_argument("--pen", type=float, default=0.5, help="pen thickness: 0 fine, 1 ballpoint, 2 gel pen")
     ap.add_argument("--jitter", type=float, default=1.0)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--watermark", action="store_true", help="embed an invisible watermark (optional)")
@@ -58,7 +59,7 @@ def main():
         print("If any line is wrong, save the corrected text to a file and pass it with --style-text.")
     ink = INK_COLORS.get(args.ink) or hex_to_rgb(args.ink)
     cfg = PageConfig(background=args.background, ink_color=ink, line_spacing_mm=args.line_spacing_mm,
-                     text_scale=args.text_scale, jitter=args.jitter, seed=args.seed,
+                     text_scale=args.text_scale, pen_weight=args.pen, jitter=args.jitter, seed=args.seed,
                      watermark=args.watermark, batch_size=args.batch_size)
     photo = Image.open(args.background_photo) if args.background_photo else None
 

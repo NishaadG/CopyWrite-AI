@@ -4,6 +4,7 @@ add human-like variation, and blend the ink into the paper."""
 import random
 from typing import List, Optional, Tuple
 
+import cv2
 import numpy as np
 from PIL import Image
 
@@ -77,6 +78,41 @@ def trim_width(line: Image.Image, pad: int = 2) -> Image.Image:
     return line.crop((max(0, cols[0] - pad), 0, min(line.width, cols[-1] + pad + 1), line.height))
 
 
+def ink_alpha(line: Image.Image, pen_weight: float = 0.5) -> np.ndarray:
+    """Line image -> ink coverage (0 = paper, 1 = full ink), with full-strength strokes.
+
+    Emuru's VAE decoder draws strokes in dark grey, not black, with a faint haze around
+    them, and thin grey strokes look washed out once scaled onto the page. So per line:
+    the paper/haze level maps to 0, the strongest strokes (90th percentile of stroke
+    pixels) map to 1. Lines that are already black barely change. `pen_weight` (0-2)
+    then thickens strokes by up to ~1 px per side per unit at 64 px height, like a bolder pen.
+    """
+    a = 1.0 - np.asarray(line.convert("L"), dtype=np.float32) / 255.0
+    strokes = a[a > 0.15]
+    if strokes.size < 10:
+        return np.clip(a, 0, 1)
+    lo = max(0.10, float(np.median(a)) + 0.06)                # paper + haze
+    hi = max(lo + 0.15, float(np.percentile(strokes, 90)))    # what counts as full ink
+    a = np.clip((a - lo) / (hi - lo), 0, 1)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    w = max(0.0, pen_weight)
+    while w > 0:  # each unit = one 3x3 dilation; fractions blend
+        a = a + (cv2.dilate(a, kernel) - a) * min(1.0, w)
+        w -= 1.0
+    return a ** 0.8  # solid stroke cores, soft (anti-aliased) edges
+
+
+def _rotate(a: np.ndarray, angle_deg: float) -> np.ndarray:
+    """Rotate an ink map around its centre, expanding the canvas so nothing is cut off."""
+    h, w = a.shape
+    m = cv2.getRotationMatrix2D((w / 2, h / 2), angle_deg, 1.0)
+    cos, sin = abs(m[0, 0]), abs(m[0, 1])
+    nw, nh = int(h * sin + w * cos) + 1, int(h * cos + w * sin) + 1
+    m[0, 2] += nw / 2 - w / 2
+    m[1, 2] += nh / 2 - h / 2
+    return cv2.warpAffine(a, m, (nw, nh), flags=cv2.INTER_LINEAR, borderValue=0)
+
+
 def place_line(
     page_ink: np.ndarray,
     line: Image.Image,
@@ -111,15 +147,14 @@ def place_line(
             squeeze = 0.85
         new_w = avail
 
-    img = line.convert("L").resize((new_w, new_h), Image.LANCZOS)
+    ink = ink_alpha(line, cfg.pen_weight)  # at the model's resolution, before any resizing
+    interp = cv2.INTER_AREA if new_h < line.height else cv2.INTER_CUBIC
+    ink = np.clip(cv2.resize(ink, (new_w, new_h), interpolation=interp), 0, 1)
     angle = rng.gauss(0, 0.35 * j)
     if abs(angle) > 0.02:
-        img = img.rotate(angle, resample=Image.BICUBIC, expand=True, fillcolor=255)
+        ink = _rotate(ink, angle)
 
-    ink = 1.0 - np.asarray(img, dtype=np.float32) / 255.0
-    ink = np.clip((ink - 0.08) / 0.92, 0, 1)  # drop faint model haze
-
-    base = int(baseline * new_h / line.height) + (img.height - new_h) // 2
+    base = int(baseline * new_h / line.height) + (ink.shape[0] - new_h) // 2
     x = slot.x_start + indent_px + int(abs(rng.gauss(0, 3.0 * j)))
     y = slot.baseline_y - base - 2 + int(round(rng.gauss(0, 1.2 * j)))
 
