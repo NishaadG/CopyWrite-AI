@@ -19,7 +19,11 @@ Full design: [`docs/DESIGN.md`](docs/DESIGN.md)
 1. Click this link: **[Open the notebook in Colab](https://colab.research.google.com/github/NishaadG/CopyWrite-AI/blob/main/notebooks/run_on_colab.ipynb)**. Sign in with a Google account if asked.
 2. In Colab: **Runtime → Change runtime type → T4 GPU → Save**.
 3. **Runtime → Run all** (`Ctrl+F9`). If Colab warns "This notebook was not authored by Google", click **Run anyway**.
-4. Wait 3-5 minutes. The last cell prints `Running on public URL: https://xxxx.gradio.live`. **Click that link.**
+4. Wait 3-5 minutes. Step 4 of the notebook prints two links:
+   - **Link 1** goes through Colab and is the most reliable. It works in the same browser where Colab is open.
+   - **Link 2** (`gradio.live`) is public and works on any device, but its relay sometimes gives **504 Gateway Time-out**. If that happens, use Link 1.
+
+   If either link fails, run the next cell (the log) and copy its output.
 5. Use the app (below). Leave the Colab tab open; closing it stops the app after a while.
 
 **After you change the code:** `git push` from your laptop, then in Colab do **Runtime → Restart session and run all**. The notebook pulls the latest code automatically.

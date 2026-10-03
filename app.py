@@ -11,6 +11,8 @@ import os
 import shutil
 import tempfile
 import threading
+import time
+import traceback
 
 import gradio as gr
 from PIL import Image
@@ -194,11 +196,19 @@ def run(source, lib_idx, text, text_file, style_files, transcription, remove_rul
 
     out_dir = tempfile.mkdtemp(prefix="copywrite_")
     debug_dir = os.path.join(out_dir, "debug") if debug else None
+    log(f"generate: backend={backend} quality={quality} style={source} chars={len(text)} ocr_check={ocr is not None}")
+
+    def report(p, m):
+        progress(p, desc=m)
+        log(f"  {p:4.0%} {m}")
+
     try:
-        result = generate_document(text, refs, gen, cfg, bg_photo, progress=lambda p, m: progress(p, desc=m),
+        result = generate_document(text, refs, gen, cfg, bg_photo, progress=report,
                                    ocr=ocr, quality=quality, debug_dir=debug_dir)
     except Exception as e:
+        log("generation FAILED:\n" + traceback.format_exc())
         raise gr.Error(f"Generation failed: {e}")
+    log("done: " + json.dumps(result["stats"]))
     files = save_pages(result["pages"], out_dir, cfg.dpi)
     debug_zip = shutil.make_archive(os.path.join(out_dir, "copywrite_debug"), "zip", debug_dir) if debug else None
     return (result["pages"], files["pdf"], gr.update(value=debug_zip, visible=bool(debug_zip)),
@@ -322,10 +332,22 @@ def build_ui(default_backend: str):
 
 def _preload(backend: str):
     """Load the models and the sample library while the user is still setting things up."""
-    library_refs()
-    if backend == "emuru":
-        generator_for("emuru").load()
-        ocr_for_checking()
+    try:
+        log("loading sample handwritings...")
+        log(f"sample handwritings: {len(library_refs())} ({_LIBRARY['error'] or 'ok'})")
+        if backend == "emuru":
+            log("loading the Emuru model (first run downloads ~3 GB)...")
+            generator_for("emuru").load()
+            log(f"Emuru ready on {generator_for('emuru').device}")
+            log("loading the TrOCR checker...")
+            log("TrOCR ready" if ocr_for_checking() is not None else "TrOCR NOT available - width check only")
+    except Exception:
+        log("preload FAILED:\n" + traceback.format_exc())
+
+
+def log(msg: str):
+    """Console log (shown by the notebook's log cell)."""
+    print(time.strftime("%H:%M:%S"), msg, flush=True)
 
 
 if __name__ == "__main__":
