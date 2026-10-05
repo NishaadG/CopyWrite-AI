@@ -27,12 +27,12 @@ from PIL import Image
 
 from .backends import FontGenerator, LineGenerator, style_px_per_char
 from .layout import estimate_baseline, trim_width
-from .metrics import letters, loose_cer
+from .metrics import letters, loose_cer, missing_letters
 from .preprocess import STYLE_HEIGHT, StyleRef, ink_mask
 
 QUALITY = {  # (candidates on the first pass, retry rounds)
-    "fast": (1, 2),
-    "best": (3, 3),
+    "fast": (1, 3),
+    "best": (3, 4),
 }
 
 
@@ -40,10 +40,11 @@ QUALITY = {  # (candidates on the first pass, retry rounds)
 class WriterConfig:
     max_piece_chars: int = 28      # ~4-5 words per model call
     candidates: int = 1            # attempts per piece on the first pass (best-of-N)
-    retries: int = 2               # extra rounds for pieces that fail verification
-    min_width_ratio: float = 0.55  # ink width / expected width outside this range = failed
+    retries: int = 3               # extra rounds for pieces that fail verification
+    min_width_ratio: float = 0.7   # ink width / expected width outside this range = failed
     max_width_ratio: float = 1.9
-    max_cer: float = 0.4           # loose CER of the OCR read-back
+    max_cer: float = 0.25          # loose CER of the OCR read-back
+    max_missing: float = 0.05      # share of letters that may be missing (OCR noise): 0 under 20 letters
     batch_size: int = 12
 
     @classmethod
@@ -64,6 +65,7 @@ class Piece:
     ocr: str = ""
     cer: Optional[float] = None
     width_ratio: float = 0.0
+    missing: Optional[int] = None  # letters of the text not found in the OCR read-back
     fallback: bool = False
 
 
@@ -246,17 +248,25 @@ class LineWriter:
         lo, hi = self.wcfg.min_width_ratio, self.wcfg.max_width_ratio
         width_bad = 0.0 if lo <= ratio <= hi else (lo - ratio if ratio < lo else ratio - hi)
         # run-on: the model kept writing after the text (reads as extra letters)
-        extra = 0.0
+        # missing: letters or whole words of the text that never got written (a dropped word
+        # is only ~0.25 CER on a 4-word piece, so the CER limit alone lets it through)
+        extra = missing = 0.0
+        miss_n = None
         if read is not None:
             n = len(letters(p.text))
             extra = max(0, len(letters(read)) - n - max(2, int(0.15 * n))) / max(1, n)
-        ok = width_bad == 0 and extra == 0 and (cer is None or cer <= self.wcfg.max_cer)
-        score = (cer or 0.0) + 2 * width_bad + extra
+            allowed = int(self.wcfg.max_missing * n)
+            miss_n = missing_letters(read, p.text)
+            missing = max(0, miss_n - allowed) / max(1, n)
+        ok = (width_bad == 0 and extra == 0 and missing == 0
+              and (cer is None or cer <= self.wcfg.max_cer))
+        score = (cer or 0.0) + 2 * width_bad + extra + 2 * missing
         if self.debug_dir:
             tag = f"l{p.line:03d}_{re.sub(r'[^A-Za-z0-9]+', '-', p.text)[:24]}_try{p.attempts}_{'ok' if ok else 'bad'}"
             img.save(os.path.join(self.debug_dir, "pieces", tag + ".png"))
         if score < p.score:
             p.image, p.score, p.ok, p.ocr, p.cer, p.width_ratio = img, score, ok, read or "", cer, ratio
+            p.missing = miss_n
 
     def _split_failed(self, pieces: Dict[int, List[Piece]], failed: List[Piece]) -> List[Piece]:
         again = []
@@ -308,7 +318,7 @@ class LineWriter:
         with open(path, "w", newline="", encoding="utf-8") as f:
             w = csv.writer(f)
             w.writerow(["line", "text", "style", "attempts", "passed", "ocr_read", "loose_cer", "width_ratio",
-                        "font_fallback"])
+                        "missing_letters", "font_fallback"])
             for p in pieces:
                 w.writerow([p.line, p.text, p.ref, p.attempts, p.ok, p.ocr,
-                            "" if p.cer is None else f"{p.cer:.2f}", f"{p.width_ratio:.2f}", p.fallback])
+                            "" if p.cer is None else f"{p.cer:.2f}", f"{p.width_ratio:.2f}", "" if p.missing is None else p.missing, p.fallback])
