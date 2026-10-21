@@ -86,6 +86,15 @@ class EmuruGenerator(LineGenerator):
         img = style.image.convert("RGB")
         if img.height != STYLE_HEIGHT:
             img = img.resize((img.width * STYLE_HEIGHT // img.height, STYLE_HEIGHT))
+        # Emuru works in 8-px latent columns and returns the canvas from x = style width onwards.
+        # A width that isn't a multiple of 8 makes the first returned column contain a sliver of
+        # the style's last stroke (e.g. its final full stop), which showed up as a stray tick at
+        # the start of every piece. Pad with white to a multiple of 8, plus a 16-px margin.
+        width = -(-(img.width + 16) // 8) * 8
+        if width != img.width:
+            padded = Image.new("RGB", (width, STYLE_HEIGHT), (255, 255, 255))
+            padded.paste(img, (0, 0))
+            img = padded
         t = F.normalize(F.to_tensor(img), [0.5], [0.5])
         return t.to(self.device)
 

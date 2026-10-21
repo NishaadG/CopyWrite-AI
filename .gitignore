@@ -12,3 +12,5 @@ flagged/
 samples/style/*
 !samples/style/.gitkeep
 !samples/style/README.md
+# raw voice recordings and video edits (personal)
+video-raw/

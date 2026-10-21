@@ -20,12 +20,14 @@ from typing import List
 
 from PIL import Image
 
-from .preprocess import MAX_STYLE_WIDTH, StyleRef, single_ref
+import numpy as np
+
+from .preprocess import MAX_STYLE_WIDTH, StyleRef, crop_to_ink, single_ref, word_gaps
 
 DATASET = "Teklia/IAM-line"
 SPLIT_FILE = "data/validation.parquet"
 N_STYLES = 36
-CACHE_VERSION = 1  # bump when the preprocessing changes, so old cached styles are rebuilt
+CACHE_VERSION = 2  # bump when the preprocessing changes, so old cached styles are rebuilt
 CACHE_DIR = os.path.join(os.path.expanduser("~"), ".cache", "copywrite", f"library_v{CACHE_VERSION}")
 _ALLOWED = re.compile(r"^[A-Za-z0-9 ,.;:!?'()\-]+$")
 
@@ -57,11 +59,29 @@ def _download() -> List[StyleRef]:
     refs = []
     for i in order:
         ref = single_ref(Image.open(io.BytesIO(images[i]["bytes"])), texts[i], remove_lines=False)
-        if ref.image.width <= MAX_STYLE_WIDTH:  # longer refs make generation slow
+        ref = drop_last_word(ref)
+        if ref is not None and ref.image.width <= MAX_STYLE_WIDTH:  # longer refs make generation slow
             refs.append(ref)
             if len(refs) == N_STYLES:
                 break
     return refs
+
+
+def drop_last_word(ref: StyleRef):
+    """Cut the last word off a sample, image and text together, at the gap before it.
+
+    In this copy of IAM the transcription sometimes disagrees with the image at the end of the
+    line ("of the" written as "of that", "submarine." as "submarines.", a full stop written as
+    a comma). Emuru learns which shape is which letter from that text, so a mismatch spoils the
+    style. Dropping the last word removes almost all of them, and the trailing punctuation too.
+    Returns None when the word gaps can't be matched to the words (then the sample is skipped).
+    """
+    words = ref.text.split()
+    gaps = word_gaps(ref.image)
+    if len(words) < 4 or len(gaps) != len(words) - 1:
+        return None
+    img = crop_to_ink(np.array(ref.image.crop((0, 0, gaps[-1], ref.image.height))))
+    return StyleRef(Image.fromarray(img), " ".join(words[:-1]))
 
 
 def load_library() -> List[StyleRef]:
