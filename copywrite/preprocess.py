@@ -53,7 +53,7 @@ def ink_gray(rgb: np.ndarray) -> np.ndarray:
         g_paper, g_ink = np.percentile(g, 50), g[dark].mean()
         t = np.clip((g_paper - g) / max(1.0, g_paper - g_ink), 0, 1)[:, None]
         colour = np.linalg.norm(chroma - (paper + t * (ink_dir - paper)), axis=1).reshape(gray.shape)
-        return np.clip(gray + 4 * colour, 0, 255).astype(np.uint8)
+        return np.clip(gray + 3 * colour, 0, 255).astype(np.uint8)
     score = (chroma - paper) @ (ink_dir - paper) / max(1e-6, float(np.dot(ink_dir - paper, ink_dir - paper)))
     full = np.percentile(score[dark], 50)  # typical stroke = full ink
     # under 30% of the ink's colour is paper: the ruling's blue and JPEG colour noise stay faint
@@ -116,7 +116,7 @@ def _split_touching(rows: np.ndarray, y0: int, y1: int) -> List[List[int]]:
     cores = [c for c in cores if c[1] - c[0] >= 0.3 * tallest]
     joined = []
     for c in cores:
-        if joined and c[0] - joined[-1][1] < 0.5 * tallest:
+        if joined and c[0] - joined[-1][1] < 0.3 * tallest:
             joined[-1][1] = c[1]
         else:
             joined.append(c)
