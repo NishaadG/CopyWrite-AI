@@ -168,14 +168,21 @@ class EmuruGenerator(LineGenerator):
             if all(x >= 0 for x in stops):
                 break
         seq = torch.cat(canvas, dim=1)
-        imgs = torch.clamp(m.vae.decode(m.z_rearrange(seq)).sample, -1, 1)
-        imgs = ((imgs + 1) / 2).mean(dim=1).cpu().numpy()  # [-1, 1] RGB -> [0, 1] gray
+        del past, enc
+        # Decode only the new columns (plus a little of the style for context at the join), a few
+        # items at a time: decoding whole canvases for a big batch is what runs a T4 out of memory.
+        ctx = min(4, start)
+        seq = seq[:, start - ctx:]
         outs = []
-        for i in range(n):
-            end = stops[i] * 8 if stops[i] >= 0 else imgs.shape[-1]
-            col = imgs[i, :, start * 8:end]
-            outs.append(Image.fromarray((col * 255).round().astype(np.uint8)) if col.shape[1] >= 4
-                        else blank_line())
+        for b in range(0, n, 4):
+            imgs = torch.clamp(m.vae.decode(m.z_rearrange(seq[b:b + 4])).sample, -1, 1)
+            imgs = ((imgs + 1) / 2).mean(dim=1).float().cpu().numpy()  # [-1, 1] RGB -> [0, 1] gray
+            for j in range(imgs.shape[0]):
+                i = b + j
+                end = (stops[i] - start + ctx) * 8 if stops[i] >= 0 else imgs.shape[-1]
+                col = imgs[j, :, ctx * 8:end]
+                outs.append(Image.fromarray((col * 255).round().astype(np.uint8)) if col.shape[1] >= 4
+                            else blank_line())
         return outs
 
     def _batch(self, texts, style, s, max_new) -> List[Image.Image]:
@@ -185,11 +192,13 @@ class EmuruGenerator(LineGenerator):
             try:
                 with self.torch.inference_mode():
                     return self._fast_generate(texts, style, s, max_new)
-            except self.torch.cuda.OutOfMemoryError:
+            except self.torch.cuda.OutOfMemoryError as e:
                 self.torch.cuda.empty_cache()
+                self.last_error = repr(e)[:200]
                 if len(texts) > 1:
                     h = len(texts) // 2
                     return self._batch(texts[:h], style, s, max_new) + self._batch(texts[h:], style, s, max_new)
+                return [blank_line()]
             except Exception as e:  # e.g. a transformers version with another cache API: use the model's loop
                 self.last_error = "fast generation off: " + repr(e)
                 self.fast = False

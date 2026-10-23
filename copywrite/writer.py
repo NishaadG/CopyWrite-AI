@@ -282,6 +282,8 @@ class LineWriter:
             if read is not None:
                 cer = loose_cer(read, p.text)
         lo, hi = self.wcfg.min_width_ratio, self.wcfg.max_width_ratio
+        if read is not None and cer == 0 and missing_letters(read, p.text) == 0:
+            lo = 0.55  # read back perfectly: only a bit narrow (common for a single short word), not cut off
         width_bad = 0.0 if lo <= ratio <= hi else (lo - ratio if ratio < lo else ratio - hi)
         # run-on: the model kept writing after the text (reads as extra letters)
         # missing: letters or whole words of the text that never got written (a dropped word
