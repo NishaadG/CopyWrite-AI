@@ -25,11 +25,34 @@ def _to_gray(img: Union[str, Image.Image, np.ndarray]) -> np.ndarray:
     if isinstance(img, str):
         img = Image.open(img)
     if isinstance(img, Image.Image):
-        img = ImageOps.exif_transpose(img).convert("L")
-        return np.array(img)
+        img = np.array(ImageOps.exif_transpose(img).convert("RGB"))
     if img.ndim == 3:
-        return cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+        return ink_gray(img[..., :3])
     return img
+
+
+def ink_gray(rgb: np.ndarray) -> np.ndarray:
+    """Grayscale that keeps only the pen's colour.
+
+    With a coloured pen (blue, red, green...) the ink differs from the paper in *colour*, while
+    the printed ruling (light blue/teal), pencil marks and writing showing through from the
+    other side of the page differ mostly in brightness. So we measure how strongly each pixel
+    has the ink's colour (its colour minus its own gray level, projected on the ink's colour
+    direction) and use that as the ink. A black/gray pen has no colour to use, so plain
+    grayscale is returned."""
+    gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+    px = rgb.reshape(-1, 3).astype(np.float32)
+    chroma = px - px.mean(axis=1, keepdims=True)
+    dark = gray.reshape(-1) <= np.percentile(gray, 3)  # the pen's strokes are the darkest pixels
+    ink_dir = chroma[dark].mean(axis=0)
+    if np.linalg.norm(ink_dir) < 15:  # black or pencil
+        return gray
+    paper = chroma[gray.reshape(-1) >= np.percentile(gray, 50)].mean(axis=0)
+    score = (chroma - paper) @ (ink_dir - paper) / max(1e-6, float(np.dot(ink_dir - paper, ink_dir - paper)))
+    full = np.percentile(score[dark], 50)  # typical stroke = full ink
+    # under 30% of the ink's colour is paper: the ruling's blue and JPEG colour noise stay faint
+    out = 255 - np.clip((score / max(full, 1e-6) - 0.3) / 0.7, 0, 1) * 255
+    return out.reshape(gray.shape).astype(np.uint8)
 
 
 def flatten_illumination(gray: np.ndarray) -> np.ndarray:
@@ -141,8 +164,10 @@ def drop_neighbour_strokes(gray: np.ndarray) -> np.ndarray:
     for k in range(1, n):
         top, height = stats[k, cv2.CC_STAT_TOP], stats[k, cv2.CC_STAT_HEIGHT]
         bottom = top + height - 1
-        # from the line above only narrow descender tips leak in; a wide blob is e.g. a T's bar
-        tip_above = top == 0 and bottom < c0 and stats[k, cv2.CC_STAT_WIDTH] < 0.6 * (c1 - c0 + 1)
+        # from the line above only narrow descender tips leak in; a wide blob is e.g. a T's bar.
+        # A tip either touches the top edge or is too tall for an i-dot or apostrophe.
+        narrow = stats[k, cv2.CC_STAT_WIDTH] < 0.6 * (c1 - c0 + 1)
+        tip_above = bottom < c0 and narrow and (top == 0 or height > 0.6 * (c1 - c0 + 1))
         if tip_above or (bottom == h - 1 and top > c1) or top > below:
             drop[labels == k] = 1
     if not drop.any():

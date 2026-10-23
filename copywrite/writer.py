@@ -194,7 +194,22 @@ class LineWriter:
             self._total += 2 * len(failed)
             self._run(failed, 2, f"Re-writing {len(failed)} piece(s) that didn't pass the check")
 
-        out = {i: self._finish_line(i, ps) for i, ps in pieces.items()}
+        # a piece the model still can't draw at all gets the other style lines before the
+        # plain-font stand-in: some letter combinations work from one sample line but not another
+        empty = [p for p in all_pieces if p.image is None or p.width_ratio < 0.3]
+        for p in empty:
+            p.ref = (p.ref + 1) % len(self.refs)
+        for _ in range(len(self.refs) - 1):
+            if not empty:
+                break
+            self.report.regenerated += len(empty)
+            self._total += 2 * len(empty)
+            self._run(empty, 2, f"Trying {len(empty)} piece(s) with another line of the sample")
+            empty = [p for p in empty if p.image is None or p.width_ratio < 0.3]
+            for p in empty:
+                p.ref = (p.ref + 1) % len(self.refs)
+
+        out ={i: self._finish_line(i, ps) for i, ps in pieces.items()}
         self.report.pieces = len(all_pieces)
         self.report.model_calls = self._calls
         self.report.model_error = getattr(self.gen, "last_error", None)

@@ -66,6 +66,7 @@ class EmuruGenerator(LineGenerator):
         self._lock = threading.Lock()  # the app preloads in a background thread
         self._stop_kw = True           # pass stopping_after unless the model code rejects it
         self.last_error = None         # last swallowed model error, shown in the run report
+        self.fast = os.environ.get("COPYWRITE_SLOW") != "1"  # cached decoding (_fast_generate)
 
     def load(self):
         with self._lock:
@@ -128,9 +129,70 @@ class EmuruGenerator(LineGenerator):
         s = self._style_tensor(style)
         return self._batch(texts, style, s, self._max_tokens(texts, style))
 
+    def _fast_generate(self, texts: List[str], style: StyleRef, s, max_new: int) -> List[Image.Image]:
+        """Same algorithm as the model's own `_generate`, but much faster and batch-safe.
+
+        The model's loop runs the whole T5 again for every 8-px column: it re-encodes the text
+        and re-reads every earlier column, so a line costs (columns)^2. Here the text is encoded
+        once and the decoder keeps a cache of the earlier columns (`past_key_values`), so each
+        step only processes the one new column. We also pass the attention mask, so the padding
+        that batching adds to shorter texts is ignored (the model's loop attends to it).
+        Stopping rule and outputs are the same: stop once `STOPPING_AFTER` columns in a row look
+        like blank paper."""
+        torch, m = self.torch, self.model
+        n = len(texts)
+        tok = m.tokenizer([style.text + " " + t for t in texts], return_tensors="pt", padding=True)
+        ids, att = tok.input_ids.to(self.device), tok.attention_mask.to(self.device)
+        _, z, _ = m._img_encode(s.unsqueeze(0).expand(n, -1, -1, -1))  # one random VAE sample per item
+        start = z.size(1)  # style columns; the style width is a multiple of 8 (_style_tensor)
+        enc = m.T5.encoder(input_ids=ids, attention_mask=att, return_dict=True)
+        pad = m.padding_token.view(1, 1, -1)
+        thr, k = m.padding_token_threshold, self.STOPPING_AFTER
+        canvas = [z]
+        step_in = torch.cat([m.sos.weight.view(1, 1, -1).expand(n, -1, -1), m.vae_to_t5(z)], dim=1)
+        past, stops = None, [-1] * n
+        blank = torch.nn.functional.cosine_similarity(z, pad, dim=-1) > thr  # (n, columns so far)
+        for _ in range(max_new):
+            out = m.T5(encoder_outputs=enc, attention_mask=att, decoder_inputs_embeds=step_in,
+                       past_key_values=past, use_cache=True, return_dict=True)
+            past = out.past_key_values
+            new = m.t5_to_vae(out.logits[:, -1:])
+            canvas.append(new)
+            step_in = m.vae_to_t5(new)
+            blank = torch.cat([blank, torch.nn.functional.cosine_similarity(new, pad, dim=-1) > thr], dim=1)
+            if blank.size(1) >= k:
+                run = blank[:, -k:].all(dim=1).tolist()
+                for i in range(n):
+                    if stops[i] < 0 and run[i]:
+                        stops[i] = blank.size(1) - k
+            if all(x >= 0 for x in stops):
+                break
+        seq = torch.cat(canvas, dim=1)
+        imgs = torch.clamp(m.vae.decode(m.z_rearrange(seq)).sample, -1, 1)
+        imgs = ((imgs + 1) / 2).mean(dim=1).cpu().numpy()  # [-1, 1] RGB -> [0, 1] gray
+        outs = []
+        for i in range(n):
+            end = stops[i] * 8 if stops[i] >= 0 else imgs.shape[-1]
+            col = imgs[i, :, start * 8:end]
+            outs.append(Image.fromarray((col * 255).round().astype(np.uint8)) if col.shape[1] >= 4
+                        else blank_line())
+        return outs
+
     def _batch(self, texts, style, s, max_new) -> List[Image.Image]:
         """Generate a batch; on GPU out-of-memory split it in half, on any other model error
         fall back to one-by-one so a single bad item can't lose the whole batch."""
+        if self.fast:
+            try:
+                with self.torch.inference_mode():
+                    return self._fast_generate(texts, style, s, max_new)
+            except self.torch.cuda.OutOfMemoryError:
+                self.torch.cuda.empty_cache()
+                if len(texts) > 1:
+                    h = len(texts) // 2
+                    return self._batch(texts[:h], style, s, max_new) + self._batch(texts[h:], style, s, max_new)
+            except Exception as e:  # e.g. a transformers version with another cache API: use the model's loop
+                self.last_error = "fast generation off: " + repr(e)
+                self.fast = False
         kw = {"max_new_tokens": max_new}
         if self._stop_kw:
             kw["stopping_after"] = self.STOPPING_AFTER

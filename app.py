@@ -220,7 +220,9 @@ def run(source, lib_idx, text, text_file, style_files, transcription, remove_rul
 def status_text(s: dict, checked: bool) -> str:
     msg = f"Done: **{s['n_pages']} page(s)**, {s['n_lines']} lines in {s['total_seconds']:.0f} s."
     if s["backend"] == "font":
-        return msg + " Download the PDF below the pages."
+        return msg + ("\n\n**This page uses the plain font, not the AI.** The Engine setting was \"Plain font\" "
+                      "(it is the default when no GPU is found). On Colab, choose Runtime > Change runtime "
+                      "type > T4 GPU, run the notebook again, and keep Engine on the AI model.")
     if checked:
         msg += f" Every piece was read back and checked; {s.get('regenerated', 0)} were rewritten."
     else:
