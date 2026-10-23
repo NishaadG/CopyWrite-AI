@@ -56,7 +56,7 @@ class PageConfig:
     watermark_text: str = "COPYWRITE"
 
     # Generation
-    batch_size: int = 8
+    batch_size: int = 32  # pieces per model call; a call costs about the same for 1 or 32 pieces
 
     # ---- derived helpers -------------------------------------------------
     def mm(self, value_mm: float) -> int:

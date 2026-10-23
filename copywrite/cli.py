@@ -35,7 +35,7 @@ def main():
     ap.add_argument("--jitter", type=float, default=1.0)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--watermark", action="store_true", help="embed an invisible watermark (optional)")
-    ap.add_argument("--batch-size", type=int, default=8)
+    ap.add_argument("--batch-size", type=int, default=32)
     ap.add_argument("--keep-ruling", action="store_true", help="don't remove notebook lines from style photo")
     ap.add_argument("--quality", default="fast", choices=["fast", "best"],
                     help="best = several attempts per piece, keep the one the OCR reads best (slower)")

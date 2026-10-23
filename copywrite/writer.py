@@ -45,7 +45,7 @@ class WriterConfig:
     max_width_ratio: float = 1.9
     max_cer: float = 0.25          # loose CER of the OCR read-back
     max_missing: float = 0.05      # share of letters that may be missing (OCR noise): 0 under 20 letters
-    batch_size: int = 12
+    batch_size: int = 32
 
     @classmethod
     def for_quality(cls, quality: str = "fast", **kw) -> "WriterConfig":
@@ -236,18 +236,23 @@ class LineWriter:
                 self.progress(min(0.99, self._done_frac(len(chunk))), msg)
 
     def _try_tail_cuts(self, chunk: List[Piece], imgs, reads):
-        """The model sometimes writes on after the text: a repeated word ('the the') or stray
-        marks. If OCR read more than the text, cut the image at its last one or two gaps
-        between words, read the shorter versions too, and keep whichever scores best."""
+        """The model sometimes writes on after the text: a repeated word ('the the'), stray
+        marks, or a row of ticks. If OCR read more than the text, or the piece is too wide, cut
+        the image at the gaps between words closest to where the text should end, read the
+        shorter versions too, and keep whichever scores best."""
         if not self.ocr:
             return
         cuts = []
         for p, img, read in zip(chunk, imgs, reads):
-            if read is None or not (run_on_words(read, p.text) or extra_marks(read, p.text)):
+            if read is None:
                 continue
             trimmed = trim_width(img, pad=0)
-            min_x = 0.6 * len(p.text) * self.ppc[p.ref]
-            for g in [g for g in word_gaps(trimmed) if g >= min_x][-2:]:
+            expected = len(p.text) * self.ppc[p.ref]
+            too_wide = trimmed.width > self.wcfg.max_width_ratio * expected
+            if not (too_wide or run_on_words(read, p.text) or extra_marks(read, p.text)):
+                continue
+            gaps = [g for g in word_gaps(trimmed) if 0.6 * expected <= g <= 1.6 * expected]
+            for g in sorted(gaps, key=lambda g: abs(g - expected))[:3]:
                 cuts.append((p, trim_width(trimmed.crop((0, 0, g, trimmed.height)), pad=4)))
         if not cuts:
             return

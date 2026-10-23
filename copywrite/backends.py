@@ -152,6 +152,10 @@ class EmuruGenerator(LineGenerator):
         step_in = torch.cat([m.sos.weight.view(1, 1, -1).expand(n, -1, -1), m.vae_to_t5(z)], dim=1)
         past, stops = None, [-1] * n
         blank = torch.nn.functional.cosine_similarity(z, pad, dim=-1) > thr  # (n, columns so far)
+        # a piece that runs on (repeats words, draws a row of ticks) would hold up the whole batch
+        # until max_new: stop it at twice its expected width, which fails the width check anyway
+        ppc = style_px_per_char(style)
+        caps = [start + int(len(t) * ppc / 8 * 2.0) + k for t in texts]
         for _ in range(max_new):
             out = m.T5(encoder_outputs=enc, attention_mask=att, decoder_inputs_embeds=step_in,
                        past_key_values=past, use_cache=True, return_dict=True)
@@ -165,6 +169,9 @@ class EmuruGenerator(LineGenerator):
                 for i in range(n):
                     if stops[i] < 0 and run[i]:
                         stops[i] = blank.size(1) - k
+            for i in range(n):
+                if stops[i] < 0 and blank.size(1) >= caps[i]:
+                    stops[i] = blank.size(1)
             if all(x >= 0 for x in stops):
                 break
         seq = torch.cat(canvas, dim=1)
