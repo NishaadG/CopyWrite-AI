@@ -47,8 +47,13 @@ def ink_gray(rgb: np.ndarray) -> np.ndarray:
     ink_dir = chroma[dark].mean(axis=0)
     paper = chroma[gray.reshape(-1) >= np.percentile(gray, 50)].mean(axis=0)
     if np.linalg.norm(ink_dir) < 15:  # black or pencil
-        colour = np.linalg.norm(chroma - paper, axis=1).reshape(gray.shape)
-        return np.clip(gray + 3 * colour, 0, 255).astype(np.uint8)
+        # a pixel's expected colour goes from the paper's (light) to the ink's (dark) with its
+        # darkness; ruling is off that path (blue on white or yellowed paper), pencil is on it
+        g = gray.reshape(-1).astype(np.float32)
+        g_paper, g_ink = np.percentile(g, 50), g[dark].mean()
+        t = np.clip((g_paper - g) / max(1.0, g_paper - g_ink), 0, 1)[:, None]
+        colour = np.linalg.norm(chroma - (paper + t * (ink_dir - paper)), axis=1).reshape(gray.shape)
+        return np.clip(gray + 4 * colour, 0, 255).astype(np.uint8)
     score = (chroma - paper) @ (ink_dir - paper) / max(1e-6, float(np.dot(ink_dir - paper, ink_dir - paper)))
     full = np.percentile(score[dark], 50)  # typical stroke = full ink
     # under 30% of the ink's colour is paper: the ruling's blue and JPEG colour noise stay faint
