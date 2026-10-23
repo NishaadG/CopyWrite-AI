@@ -28,7 +28,7 @@ from PIL import Image
 from .backends import FontGenerator, LineGenerator, style_px_per_char
 from .layout import estimate_baseline, trim_width
 from .metrics import extra_marks, letters, loose_cer, missing_letters, run_on_words
-from .preprocess import STYLE_HEIGHT, StyleRef, ink_mask, word_gaps
+from .preprocess import STYLE_HEIGHT, StyleRef, ink_mask, normalize_contrast, word_gaps
 
 QUALITY = {  # (candidates on the first pass, retry rounds)
     "fast": (1, 3),
@@ -339,7 +339,9 @@ class LineWriter:
             if p.image is None or p.width_ratio < 0.3:  # the model produced (almost) nothing
                 p.image, p.fallback = self._font_piece(p), True
                 self.report.font_fallback += 1
-            imgs.append(p.image)
+            # pieces of one line come from different model calls and can differ in ink darkness;
+            # give each the same black ink on white so a rewritten word doesn't look faded
+            imgs.append(p.image if p.fallback else Image.fromarray(normalize_contrast(np.array(p.image.convert("L")))))
         line = stitch(imgs, self.gaps[ref]) if len(imgs) > 1 else trim_width(imgs[0], pad=4)
         text = " ".join(p.text for p in ps)
         # the model continues the style image, so it keeps that image's baseline; measure it on
