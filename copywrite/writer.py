@@ -27,8 +27,8 @@ from PIL import Image
 
 from .backends import FontGenerator, LineGenerator, style_px_per_char
 from .layout import estimate_baseline, trim_width
-from .metrics import letters, loose_cer, missing_letters
-from .preprocess import STYLE_HEIGHT, StyleRef, ink_mask
+from .metrics import extra_marks, letters, loose_cer, missing_letters, run_on_words
+from .preprocess import STYLE_HEIGHT, StyleRef, ink_mask, word_gaps
 
 QUALITY = {  # (candidates on the first pass, retry rounds)
     "fast": (1, 3),
@@ -232,7 +232,28 @@ class LineWriter:
                 reads = self._read(imgs, chunk)
                 for p, img, read in zip(chunk, imgs, reads):
                     self._consider(p, img, read)
+                self._try_tail_cuts(chunk, imgs, reads)
                 self.progress(min(0.99, self._done_frac(len(chunk))), msg)
+
+    def _try_tail_cuts(self, chunk: List[Piece], imgs, reads):
+        """The model sometimes writes on after the text: a repeated word ('the the') or stray
+        marks. If OCR read more than the text, cut the image at its last one or two gaps
+        between words, read the shorter versions too, and keep whichever scores best."""
+        if not self.ocr:
+            return
+        cuts = []
+        for p, img, read in zip(chunk, imgs, reads):
+            if read is None or not (run_on_words(read, p.text) or extra_marks(read, p.text)):
+                continue
+            trimmed = trim_width(img, pad=0)
+            min_x = 0.6 * len(p.text) * self.ppc[p.ref]
+            for g in [g for g in word_gaps(trimmed) if g >= min_x][-2:]:
+                cuts.append((p, trim_width(trimmed.crop((0, 0, g, trimmed.height)), pad=4)))
+        if not cuts:
+            return
+        res = self.ocr.read([c for _, c in cuts])
+        for (p, cut), r in zip(cuts, res):
+            self._consider(p, cut, r.text, count=False)
 
     def _done_frac(self, k: int) -> float:
         self._done = getattr(self, "_done", 0) + k
@@ -249,8 +270,8 @@ class LineWriter:
                 out[i] = r.text
         return out
 
-    def _consider(self, p: Piece, img: Image.Image, read: Optional[str]):
-        p.attempts += 1
+    def _consider(self, p: Piece, img: Image.Image, read: Optional[str], count: bool = True):
+        p.attempts += count
         ratio = 1.0
         cer = None
         if self.verify:
@@ -267,17 +288,20 @@ class LineWriter:
         # is only ~0.25 CER on a 4-word piece, so the CER limit alone lets it through)
         extra = missing = 0.0
         miss_n = None
+        words_on = marks = 0
         if read is not None:
             n = len(letters(p.text))
             extra = max(0, len(letters(read)) - n - max(2, int(0.15 * n))) / max(1, n)
             allowed = int(self.wcfg.max_missing * n)
             miss_n = missing_letters(read, p.text)
             missing = max(0, miss_n - allowed) / max(1, n)
-        ok = (width_bad == 0 and extra == 0 and missing == 0
+            words_on = run_on_words(read, p.text)   # 'the the': an extra word written after the text
+            marks = extra_marks(read, p.text)       # stray dots/ticks/colons
+        ok = (width_bad == 0 and extra == 0 and missing == 0 and words_on == 0 and marks < 2
               and (cer is None or cer <= self.wcfg.max_cer))
-        score = (cer or 0.0) + 2 * width_bad + extra + 2 * missing
+        score = (cer or 0.0) + 2 * width_bad + extra + 2 * missing + 0.3 * words_on + 0.05 * marks
         if self.debug_dir:
-            tag = f"l{p.line:03d}_{re.sub(r'[^A-Za-z0-9]+', '-', p.text)[:24]}_try{p.attempts}_{'ok' if ok else 'bad'}"
+            tag = f"l{p.line:03d}_{re.sub(r'[^A-Za-z0-9]+', '-', p.text)[:24]}_try{p.attempts}{'' if count else 'cut'}_{'ok' if ok else 'bad'}"
             img.save(os.path.join(self.debug_dir, "pieces", tag + ".png"))
         if score < p.score:
             p.image, p.score, p.ok, p.ocr, p.cer, p.width_ratio = img, score, ok, read or "", cer, ratio

@@ -47,6 +47,23 @@ def missing_letters(pred: str, truth: str) -> int:
     return dp[-1][-1][1]
 
 
+def run_on_words(pred: str, truth: str) -> int:
+    """Words read beyond the text's word count, when there are also extra letters.
+
+    Catches the model writing on after the text ('while the the', 'and a a'). Requiring extra
+    letters too means OCR splitting one word in two ('b alances') doesn't count."""
+    words = lambda s: [w for w in s.split() if letters(w)]
+    if len(letters(pred)) <= len(letters(truth)):
+        return 0
+    return max(0, len(words(pred)) - len(words(truth)))
+
+
+def extra_marks(pred: str, truth: str) -> int:
+    """Punctuation-like marks read beyond those in the text (stray dots, ticks, colons)."""
+    marks = lambda s: len(re.sub(r"[A-Za-z0-9\s]", "", s))
+    return max(0, marks(pred) - marks(truth))
+
+
 def loose_cer(pred: str, truth: str) -> float:
     """CER on letters and digits only, ignoring case, spaces and punctuation.
 
