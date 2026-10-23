@@ -38,16 +38,17 @@ def ink_gray(rgb: np.ndarray) -> np.ndarray:
     the printed ruling (light blue/teal), pencil marks and writing showing through from the
     other side of the page differ mostly in brightness. So we measure how strongly each pixel
     has the ink's colour (its colour minus its own gray level, projected on the ink's colour
-    direction) and use that as the ink. A black/gray pen has no colour to use, so plain
-    grayscale is returned."""
+    direction) and use that as the ink. A black/gray pen or pencil has no colour to use, so
+    grayscale is returned, with coloured pixels (blue ruling, red margin) pushed towards paper."""
     gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
     px = rgb.reshape(-1, 3).astype(np.float32)
     chroma = px - px.mean(axis=1, keepdims=True)
     dark = gray.reshape(-1) <= np.percentile(gray, 3)  # the pen's strokes are the darkest pixels
     ink_dir = chroma[dark].mean(axis=0)
-    if np.linalg.norm(ink_dir) < 15:  # black or pencil
-        return gray
     paper = chroma[gray.reshape(-1) >= np.percentile(gray, 50)].mean(axis=0)
+    if np.linalg.norm(ink_dir) < 15:  # black or pencil
+        colour = np.linalg.norm(chroma - paper, axis=1).reshape(gray.shape)
+        return np.clip(gray + 3 * colour, 0, 255).astype(np.uint8)
     score = (chroma - paper) @ (ink_dir - paper) / max(1e-6, float(np.dot(ink_dir - paper, ink_dir - paper)))
     full = np.percentile(score[dark], 50)  # typical stroke = full ink
     # under 30% of the ink's colour is paper: the ruling's blue and JPEG colour noise stay faint
@@ -90,6 +91,36 @@ def ink_mask(gray: np.ndarray) -> np.ndarray:
     return bw > 0
 
 
+def _split_touching(rows: np.ndarray, y0: int, y1: int) -> List[List[int]]:
+    """Split a band holding several lines whose ascenders/descenders touch (no blank row between).
+
+    Each line has a dense core (its x-height zone); between two lines there are only the thin
+    ascenders and descenders. So: find the dense runs, and cut at the emptiest row between
+    neighbouring ones. A single line has one core and is returned unchanged."""
+    band = rows[y0:y1]
+    dense = band > band.max() * 0.35
+    cores, start = [], None
+    for y, d in enumerate(np.append(dense, False)):
+        if d and start is None:
+            start = y
+        elif not d and start is not None:
+            cores.append([start, y])
+            start = None
+    tallest = max(c[1] - c[0] for c in cores)
+    # ignore thin dense runs (a long t-bar or underline) and runs only a few rows apart
+    cores = [c for c in cores if c[1] - c[0] >= 0.3 * tallest]
+    joined = []
+    for c in cores:
+        if joined and c[0] - joined[-1][1] < 0.5 * tallest:
+            joined[-1][1] = c[1]
+        else:
+            joined.append(c)
+    if len(joined) < 2:
+        return [[y0, y1]]
+    cuts = [y0] + [y0 + a[1] + int(np.argmin(band[a[1]:b[0]])) for a, b in zip(joined, joined[1:])] + [y1]
+    return [[a, b] for a, b in zip(cuts, cuts[1:])]
+
+
 def split_lines(gray: np.ndarray, min_gap: int = 3) -> List[np.ndarray]:
     """Split a multi-line image into single text lines using a horizontal projection profile."""
     mask = ink_mask(gray)
@@ -114,17 +145,21 @@ def split_lines(gray: np.ndarray, min_gap: int = 3) -> List[np.ndarray]:
             merged[-1][1] = b[1]
         else:
             merged.append(b)
+    merged = [part for b in merged for part in _split_touching(rows, *b)]
     heights = [b[1] - b[0] for b in merged]
     if not heights:
         return []
     med = float(np.median(heights))
-    # drop specks, then pad each band a little so descenders/ascenders survive
+    # drop specks, then pad each band a little so descenders/ascenders survive,
+    # but never into the next band (touching lines were cut with no gap between them)
     out = []
-    for y0, y1 in merged:
+    pad = int(med * 0.25)
+    for i, (y0, y1) in enumerate(merged):
         if y1 - y0 < med * 0.35:
             continue
-        pad = int(med * 0.25)
-        out.append(gray[max(0, y0 - pad): min(gray.shape[0], y1 + pad)])
+        top = max(0, y0 - pad, merged[i - 1][1] if i else 0)
+        bottom = min(gray.shape[0], y1 + pad, merged[i + 1][0] if i + 1 < len(merged) else gray.shape[0])
+        out.append(gray[top:bottom])
     return out
 
 
