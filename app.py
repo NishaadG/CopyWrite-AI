@@ -37,11 +37,13 @@ CSS = """
 .step h3 {margin: 14px 0 2px;}
 #write-btn {font-size: 1.15rem; min-height: 54px;}
 #status {min-height: 28px;}
-/* handwriting samples are wide single lines: show them as full-width rows, not squares */
-#lib-gallery .grid-container {grid-template-columns: 1fr !important; grid-template-rows: none !important;
-                              grid-auto-rows: auto !important;}
-#lib-gallery .thumbnail-item {aspect-ratio: auto !important; height: auto !important; background: #fff;}
-#lib-gallery .thumbnail-item img {width: 100% !important; height: auto !important; object-fit: contain !important;}
+/* handwriting samples and detected lines are wide single lines: full-width rows, not squares */
+#lib-gallery .grid-container, #lines-gallery .grid-container {grid-template-columns: 1fr !important;
+    grid-template-rows: none !important; grid-auto-rows: auto !important;}
+#lib-gallery .thumbnail-item, #lines-gallery .thumbnail-item {aspect-ratio: auto !important; height: auto !important;
+    background: #fff;}
+#lib-gallery .thumbnail-item img, #lines-gallery .thumbnail-item img {width: 100% !important; height: auto !important;
+    object-fit: contain !important;}
 """
 
 _GENERATORS = {}
@@ -268,7 +270,7 @@ def build_ui(default_backend: str):
                         read_btn = gr.Button("Read my handwriting")
                         style_msg = gr.Markdown()
                         style_gallery = gr.Gallery(label="Lines found (OCR text, confidence)", columns=1,
-                                                   height=220, object_fit="contain")
+                                                   height=220, object_fit="contain", elem_id="lines-gallery")
                         transcription = gr.Textbox(label="What each line says - one line of text per handwritten "
                                                          "line, must match exactly", lines=4)
 
